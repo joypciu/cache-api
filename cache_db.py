@@ -56,8 +56,12 @@ def get_cache_entry(
             # Search for team by name AND sport (case-insensitive)
             if normalized_sport:
                 cursor.execute("""
-                    SELECT t.id, t.name, t.abbreviation, t.city, t.mascot, t.nickname,
-                           l.name as league_name, s.name as sport_name
+                    SELECT t.id, t.name, t.numerical_id, t.base_id, t.abbreviation, 
+                           t.city, t.mascot, t.nickname, t.division, t.conference, 
+                           t.logo, t.is_active,
+                           l.id as league_id, l.name as league_name, l.numerical_id as league_numerical_id,
+                           l.region, l.region_code, l.gender,
+                           s.id as sport_id, s.name as sport_name, s.numerical_id as sport_numerical_id
                     FROM teams t
                     LEFT JOIN leagues l ON t.league_id = l.id
                     LEFT JOIN sports s ON t.sport_id = s.id
@@ -68,8 +72,12 @@ def get_cache_entry(
             else:
                 # Fallback if sport not provided (shouldn't happen due to API validation)
                 cursor.execute("""
-                    SELECT t.id, t.name, t.abbreviation, t.city, t.mascot, t.nickname,
-                           l.name as league_name, s.name as sport_name
+                    SELECT t.id, t.name, t.numerical_id, t.base_id, t.abbreviation, 
+                           t.city, t.mascot, t.nickname, t.division, t.conference, 
+                           t.logo, t.is_active,
+                           l.id as league_id, l.name as league_name, l.numerical_id as league_numerical_id,
+                           l.region, l.region_code, l.gender,
+                           s.id as sport_id, s.name as sport_name, s.numerical_id as sport_numerical_id
                     FROM teams t
                     LEFT JOIN leagues l ON t.league_id = l.id
                     LEFT JOIN sports s ON t.sport_id = s.id
@@ -83,8 +91,9 @@ def get_cache_entry(
                 
                 # Get all players for this team (ONE-TO-MANY relationship)
                 cursor.execute("""
-                    SELECT p.id, p.name, p.first_name, p.last_name, p.position, 
-                           p.number, p.age, p.height, p.weight
+                    SELECT p.id, p.name, p.numerical_id, p.base_id, p.first_name, p.last_name, 
+                           p.position, p.number, p.age, p.height, p.weight, p.experience, 
+                           p.logo, p.is_active
                     FROM players p
                     WHERE p.team_id = ?
                     ORDER BY p.name
@@ -95,13 +104,33 @@ def get_cache_entry(
                 return {
                     "type": "team",
                     "query": team,
-                    "normalized_name": result["name"],
-                    "abbreviation": result["abbreviation"],
-                    "city": result["city"],
-                    "mascot": result["mascot"],
-                    "nickname": result["nickname"],
-                    "league": result["league_name"],
-                    "sport": result["sport_name"],
+                    "team_info": {
+                        "id": result["id"],
+                        "name": result["name"],
+                        "numerical_id": result["numerical_id"],
+                        "base_id": result["base_id"],
+                        "abbreviation": result["abbreviation"],
+                        "city": result["city"],
+                        "mascot": result["mascot"],
+                        "nickname": result["nickname"],
+                        "division": result["division"],
+                        "conference": result["conference"],
+                        "logo": result["logo"],
+                        "is_active": bool(result["is_active"])
+                    },
+                    "league_info": {
+                        "id": result["league_id"],
+                        "name": result["league_name"],
+                        "numerical_id": result["league_numerical_id"],
+                        "region": result["region"],
+                        "region_code": result["region_code"],
+                        "gender": result["gender"]
+                    },
+                    "sport_info": {
+                        "id": result["sport_id"],
+                        "name": result["sport_name"],
+                        "numerical_id": result["sport_numerical_id"]
+                    },
                     "players": players,
                     "player_count": len(players)
                 }
