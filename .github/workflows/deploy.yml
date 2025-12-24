@@ -38,8 +38,8 @@ jobs:
             sudo cp cache-api.service /etc/systemd/system/cache-api.service
             sudo systemctl daemon-reload
 
-            # Kill any process on port 8000
-            sudo fuser -k 8000/tcp || true
+            # Kill any process on port 8001
+            sudo fuser -k 8001/tcp || true
 
             # Restart the cache-api service
             sudo systemctl restart cache-api
@@ -49,9 +49,9 @@ jobs:
             sleep 3
             sudo systemctl status cache-api --no-pager || true
 
-            # Check if port 8000 is listening
-            echo "=== Port 8000 status ==="
-            sudo netstat -tlnp | grep :8000 || echo "Port 8000 not listening"
+            # Check if port 8001 is listening
+            echo "=== Port 8001 status ==="
+            sudo netstat -tlnp | grep :8001 || echo "Port 8001 not listening"
 
             # Show recent logs
             echo "=== System logs ==="

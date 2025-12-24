@@ -26,13 +26,13 @@ Retrieve normalized cache entries.
 
 ```bash
 # Look up a team
-curl "http://142.44.160.36:8000/cache?team=Lakers"
+curl "http://142.44.160.36:8001/cache?team=Lakers"
 
 # Look up a player
-curl "http://142.44.160.36:8000/cache?player=LeBron%20James"
+curl "http://142.44.160.36:8001/cache?player=LeBron%20James"
 
 # Look up a market
-curl "http://142.44.160.36:8000/cache?market=moneyline"
+curl "http://142.44.160.36:8001/cache?market=moneyline"
 ```
 
 **Response Format:**
@@ -101,7 +101,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-The API will be available at `http://localhost:8000`
+The API will be available at `http://localhost:8001`
 
 ## VPS Deployment
 
@@ -244,7 +244,7 @@ sudo systemctl restart cache-api
 
 ## Port Configuration
 
-The service runs on port **8000** by default. To change:
+The service runs on port **8001** by default (port 8000 is used by unified-odds service). To change:
 
 1. Update `main.py` (line with `uvicorn.run`)
 2. Update `deploy.yml` port check commands
