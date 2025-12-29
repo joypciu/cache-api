@@ -58,9 +58,32 @@ def get_cache_entry(
             normalized_player = normalize_key(player)
             normalized_sport = normalize_key(sport) if sport else None
             
-            # Search for player(s) matching name AND belonging to specified team
+            # First, resolve player alias to player_id
+            cursor.execute("""
+                SELECT DISTINCT player_id FROM player_aliases
+                WHERE LOWER(alias) = ?
+            """, (normalized_player,))
+            player_ids = [row[0] for row in cursor.fetchall()]
+            
+            if not player_ids:
+                return None
+            
+            # Then, resolve team alias to team_id
+            cursor.execute("""
+                SELECT DISTINCT team_id FROM team_aliases
+                WHERE LOWER(alias) = ?
+            """, (normalized_team,))
+            team_ids = [row[0] for row in cursor.fetchall()]
+            
+            if not team_ids:
+                return None
+            
+            # Search for player(s) matching player_id AND team_id, filtered by sport if provided
+            placeholders_players = ','.join('?' * len(player_ids))
+            placeholders_teams = ','.join('?' * len(team_ids))
+            
             if normalized_sport:
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT p.id, p.name, p.first_name, p.last_name, p.position, p.number,
                            p.age, p.height, p.weight,
                            t.name as team_name, t.abbreviation, t.city,
@@ -69,13 +92,13 @@ def get_cache_entry(
                     JOIN teams t ON p.team_id = t.id
                     LEFT JOIN leagues l ON p.league_id = l.id
                     LEFT JOIN sports s ON p.sport_id = s.id
-                    WHERE (LOWER(p.name) = ? OR LOWER(p.first_name || ' ' || p.last_name) = ?)
-                      AND (LOWER(t.name) = ? OR LOWER(t.nickname) = ? OR LOWER(t.abbreviation) = ?)
+                    WHERE p.id IN ({placeholders_players})
+                      AND p.team_id IN ({placeholders_teams})
                       AND LOWER(s.name) = ?
                     ORDER BY p.name
-                """, (normalized_player, normalized_player, normalized_team, normalized_team, normalized_team, normalized_sport))
+                """, (*player_ids, *team_ids, normalized_sport))
             else:
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT p.id, p.name, p.first_name, p.last_name, p.position, p.number,
                            p.age, p.height, p.weight,
                            t.name as team_name, t.abbreviation, t.city,
@@ -84,10 +107,10 @@ def get_cache_entry(
                     JOIN teams t ON p.team_id = t.id
                     LEFT JOIN leagues l ON p.league_id = l.id
                     LEFT JOIN sports s ON p.sport_id = s.id
-                    WHERE (LOWER(p.name) = ? OR LOWER(p.first_name || ' ' || p.last_name) = ?)
-                      AND (LOWER(t.name) = ? OR LOWER(t.nickname) = ? OR LOWER(t.abbreviation) = ?)
+                    WHERE p.id IN ({placeholders_players})
+                      AND p.team_id IN ({placeholders_teams})
                     ORDER BY p.name
-                """, (normalized_player, normalized_player, normalized_team, normalized_team, normalized_team))
+                """, (*player_ids, *team_ids))
             
             results = cursor.fetchall()
             if results:
@@ -127,30 +150,41 @@ def get_cache_entry(
             normalized_team = normalize_key(team)
             normalized_sport = normalize_key(sport) if sport else None
             
-            # Search for ALL teams with EXACT name match AND sport (case-insensitive)
-            # Checks name, nickname, or abbreviation for exact match
+            # First, resolve team alias to team_id(s)
+            cursor.execute("""
+                SELECT DISTINCT team_id FROM team_aliases
+                WHERE LOWER(alias) = ?
+            """, (normalized_team,))
+            team_ids = [row[0] for row in cursor.fetchall()]
+            
+            if not team_ids:
+                return None
+            
+            # Search for ALL teams matching team_id(s) AND sport (case-insensitive)
+            placeholders = ','.join('?' * len(team_ids))
+            
             if normalized_sport:
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT t.id, t.name, t.abbreviation, t.city, t.mascot, t.nickname,
                            l.name as league_name, s.name as sport_name
                     FROM teams t
                     LEFT JOIN leagues l ON t.league_id = l.id
                     LEFT JOIN sports s ON t.sport_id = s.id
-                    WHERE (LOWER(t.name) = ? OR LOWER(t.nickname) = ? OR LOWER(t.abbreviation) = ?)
+                    WHERE t.id IN ({placeholders})
                       AND LOWER(s.name) = ?
                     ORDER BY t.name
-                """, (normalized_team, normalized_team, normalized_team, normalized_sport))
+                """, (*team_ids, normalized_sport))
             else:
                 # Fallback if sport not provided (shouldn't happen due to API validation)
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT t.id, t.name, t.abbreviation, t.city, t.mascot, t.nickname,
                            l.name as league_name, s.name as sport_name
                     FROM teams t
                     LEFT JOIN leagues l ON t.league_id = l.id
                     LEFT JOIN sports s ON t.sport_id = s.id
-                    WHERE LOWER(t.name) = ? OR LOWER(t.nickname) = ? OR LOWER(t.abbreviation) = ?
+                    WHERE t.id IN ({placeholders})
                     ORDER BY t.name
-                """, (normalized_team, normalized_team, normalized_team))
+                """, tuple(team_ids))
             
             results = cursor.fetchall()
             if results:
@@ -193,8 +227,20 @@ def get_cache_entry(
         
         if player:
             normalized_player = normalize_key(player)
-            # Search for ALL players with EXACT name match (case-insensitive)
+            
+            # First, resolve player alias to player_id(s)
             cursor.execute("""
+                SELECT DISTINCT player_id FROM player_aliases
+                WHERE LOWER(alias) = ?
+            """, (normalized_player,))
+            player_ids = [row[0] for row in cursor.fetchall()]
+            
+            if not player_ids:
+                return None
+            
+            # Search for ALL players with matching player_id (case-insensitive)
+            placeholders = ','.join('?' * len(player_ids))
+            cursor.execute(f"""
                 SELECT p.id, p.name, p.first_name, p.last_name, p.position, p.number,
                        p.age, p.height, p.weight,
                        t.name as team_name, l.name as league_name, s.name as sport_name
@@ -202,9 +248,9 @@ def get_cache_entry(
                 LEFT JOIN teams t ON p.team_id = t.id
                 LEFT JOIN leagues l ON p.league_id = l.id
                 LEFT JOIN sports s ON p.sport_id = s.id
-                WHERE LOWER(p.name) = ? OR LOWER(p.first_name || ' ' || p.last_name) = ?
+                WHERE p.id IN ({placeholders})
                 ORDER BY p.name
-            """, (normalized_player, normalized_player))
+            """, tuple(player_ids))
             
             results = cursor.fetchall()
             if results:
@@ -235,13 +281,26 @@ def get_cache_entry(
         
         if market:
             normalized_market = normalize_key(market)
-            # Search for market by name (case-insensitive)
+            
+            # First, resolve market alias to market_id
+            cursor.execute("""
+                SELECT DISTINCT market_id FROM market_aliases
+                WHERE LOWER(alias) = ?
+                LIMIT 1
+            """, (normalized_market,))
+            
+            alias_result = cursor.fetchone()
+            if not alias_result:
+                return None
+            
+            market_id = alias_result[0]
+            
+            # Search for market by resolved ID
             cursor.execute("""
                 SELECT m.id, m.name, m.market_type_id
                 FROM markets m
-                WHERE LOWER(m.name) = ?
-                LIMIT 1
-            """, (normalized_market,))
+                WHERE m.id = ?
+            """, (market_id,))
             
             result = cursor.fetchone()
             if result:
