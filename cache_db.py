@@ -1,11 +1,12 @@
 """
 Cache Database Module
-Provides database access to sports data using SQLite.
+Provides database access to sports data using SQLite with Redis caching.
 """
 
 import sqlite3
 import os
 from typing import Optional, Dict, Any, List
+from redis_cache import get_cached_data, set_cached_data
 
 # Database file path
 DB_PATH = os.path.join(os.path.dirname(__file__), "sports_data.db")
@@ -29,25 +30,35 @@ def get_cache_entry(
     market: Optional[str] = None,
     team: Optional[str] = None,
     player: Optional[str] = None,
-    sport: Optional[str] = None
+    sport: Optional[str] = None,
+    league: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """
     Retrieve cache entry based on provided parameters.
+    Uses Redis for caching with fallback to SQLite database.
     
     Relationships:
     - ONE-TO-MANY: Team → Players (one team has many players)
     - ONE-TO-ONE: Player → Team (each player belongs to exactly one team)
+    - ONE-TO-MANY: League → Teams (one league has many teams)
     
     Args:
         market: Market type to look up
         team: Team name to look up (returns team with all its players)
         player: Player name to look up (returns player with their one team)
         sport: Sport name (required when searching by team)
+        league: League name to look up (returns league with all its teams)
     
     Returns:
         Dictionary with cache entry data or None if not found
     """
     
+    # Try to get from Redis cache first
+    cached_result = get_cached_data(market=market, team=team, player=player, sport=sport, league=league)
+    if cached_result is not None:
+        return cached_result
+    
+    # Cache miss - query database
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -134,7 +145,7 @@ def get_cache_entry(
                         "sport": result["sport_name"]
                     })
                 
-                return {
+                result_data = {
                     "type": "player",
                     "query": {
                         "player": player,
@@ -144,6 +155,13 @@ def get_cache_entry(
                     "players": players_data,
                     "player_count": len(players_data)
                 }
+                
+                # Cache the result
+                set_cached_data(result_data, market=market, team=team, player=player, sport=sport)
+                return result_data
+            else:
+                # No player found in that specific team
+                return None
         
         # Priority: team > player > market
         if team:
@@ -218,12 +236,16 @@ def get_cache_entry(
                         "player_count": len(players)
                     })
                 
-                return {
+                result_data = {
                     "type": "team",
                     "query": team,
                     "teams": teams_data,
                     "team_count": len(teams_data)
                 }
+                
+                # Cache the result
+                set_cached_data(result_data, market=market, team=team, player=player, sport=sport)
+                return result_data
         
         if player:
             normalized_player = normalize_key(player)
@@ -272,12 +294,88 @@ def get_cache_entry(
                         "sport": result["sport_name"]
                     })
                 
-                return {
+                result_data = {
                     "type": "player",
                     "query": player,
                     "players": players_data,
                     "player_count": len(players_data)
                 }
+                
+                # Cache the result
+                set_cached_data(result_data, market=market, team=team, player=player, sport=sport)
+                return result_data
+        
+        if league:
+            normalized_league = normalize_key(league)
+            normalized_sport = normalize_key(sport) if sport else None
+            
+            # First, resolve league alias to league_id(s)
+            cursor.execute("""
+                SELECT DISTINCT league_id FROM league_aliases
+                WHERE LOWER(alias) = ?
+            """, (normalized_league,))
+            league_ids = [row[0] for row in cursor.fetchall()]
+            
+            if not league_ids:
+                return None
+            
+            # Search for ALL leagues matching league_id(s), filtered by sport if provided
+            placeholders = ','.join('?' * len(league_ids))
+            
+            if normalized_sport:
+                cursor.execute(f"""
+                    SELECT l.id, l.name, s.name as sport_name
+                    FROM leagues l
+                    LEFT JOIN sports s ON l.sport_id = s.id
+                    WHERE l.id IN ({placeholders})
+                      AND LOWER(s.name) = ?
+                    ORDER BY l.name
+                """, (*league_ids, normalized_sport))
+            else:
+                cursor.execute(f"""
+                    SELECT l.id, l.name, s.name as sport_name
+                    FROM leagues l
+                    LEFT JOIN sports s ON l.sport_id = s.id
+                    WHERE l.id IN ({placeholders})
+                    ORDER BY l.name
+                """, tuple(league_ids))
+            
+            results = cursor.fetchall()
+            if results:
+                leagues_data = []
+                
+                # Process each matching league
+                for result in results:
+                    league_id = result["id"]
+                    
+                    # Get all teams for this league (ONE-TO-MANY relationship)
+                    cursor.execute("""
+                        SELECT t.id, t.name, t.abbreviation, t.city, t.mascot, t.nickname
+                        FROM teams t
+                        WHERE t.league_id = ?
+                        ORDER BY t.name
+                    """, (league_id,))
+                    
+                    teams = [dict(row) for row in cursor.fetchall()]
+                    
+                    leagues_data.append({
+                        "id": result["id"],
+                        "normalized_name": result["name"],
+                        "sport": result["sport_name"],
+                        "teams": teams,
+                        "team_count": len(teams)
+                    })
+                
+                result_data = {
+                    "type": "league",
+                    "query": league,
+                    "leagues": leagues_data,
+                    "league_count": len(leagues_data)
+                }
+                
+                # Cache the result
+                set_cached_data(result_data, market=market, team=team, player=player, sport=sport, league=league)
+                return result_data
         
         if market:
             normalized_market = normalize_key(market)
@@ -313,13 +411,17 @@ def get_cache_entry(
                 """, (result["id"],))
                 sports = [row["name"] for row in cursor.fetchall()]
                 
-                return {
+                result_data = {
                     "type": "market",
                     "query": market,
                     "normalized_name": result["name"],
                     "market_type_id": result["market_type_id"],
                     "sports": sports
                 }
+                
+                # Cache the result
+                set_cached_data(result_data, market=market, team=team, player=player, sport=sport)
+                return result_data
         
         # No match found
         return None
