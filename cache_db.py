@@ -26,6 +26,31 @@ def normalize_key(value: str) -> str:
     return value.lower().strip()
 
 
+def get_league_priority(league_name: str) -> int:
+    """
+    Get sorting priority for leagues.
+    Lower number = higher priority
+    """
+    if not league_name:
+        return 999
+    
+    league_lower = league_name.lower()
+    
+    # Priority leagues
+    if 'premier league' in league_lower and 'england' in league_lower:
+        return 1
+    elif 'la liga' in league_lower or ('liga' in league_lower and 'spain' in league_lower):
+        return 2
+    elif 'bundesliga' in league_lower or ('bundesliga' in league_lower and 'germany' in league_lower):
+        return 3
+    elif 'serie a' in league_lower or ('serie' in league_lower and 'italy' in league_lower):
+        return 4
+    elif 'ligue 1' in league_lower or ('ligue' in league_lower and 'france' in league_lower):
+        return 5
+    else:
+        return 999  # All other leagues
+
+
 def get_cache_entry(
     market: Optional[str] = None,
     team: Optional[str] = None,
@@ -285,6 +310,9 @@ def get_cache_entry(
                         "player_count": len(players)
                     })
                 
+                # Sort teams by league priority
+                teams_data.sort(key=lambda x: (get_league_priority(x.get("league", "")), x.get("normalized_name", "")))
+                
                 result_data = {
                     "type": "team",
                     "query": team,
@@ -353,6 +381,9 @@ def get_cache_entry(
                         "league": result["league_name"],
                         "sport": result["sport_name"]
                     })
+                
+                # Sort players by league priority
+                players_data.sort(key=lambda x: (get_league_priority(x.get("league", "")), x.get("normalized_name", "")))
                 
                 result_data = {
                     "type": "player",
@@ -445,6 +476,9 @@ def get_cache_entry(
                         "teams": teams,
                         "team_count": len(teams)
                     })
+                
+                # Sort leagues by priority
+                leagues_data.sort(key=lambda x: (get_league_priority(x.get("normalized_name", "")), x.get("normalized_name", "")))
                 
                 result_data = {
                     "type": "league",
