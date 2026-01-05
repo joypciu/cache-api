@@ -26,6 +26,31 @@ def normalize_key(value: str) -> str:
     return value.lower().strip()
 
 
+def get_league_priority(league_name: str) -> int:
+    """
+    Get sorting priority for leagues.
+    Lower number = higher priority
+    """
+    if not league_name:
+        return 999
+    
+    league_lower = league_name.lower()
+    
+    # Priority leagues
+    if 'premier league' in league_lower and 'england' in league_lower:
+        return 1
+    elif 'la liga' in league_lower or ('liga' in league_lower and 'spain' in league_lower):
+        return 2
+    elif 'bundesliga' in league_lower or ('bundesliga' in league_lower and 'germany' in league_lower):
+        return 3
+    elif 'serie a' in league_lower or ('serie' in league_lower and 'italy' in league_lower):
+        return 4
+    elif 'ligue 1' in league_lower or ('ligue' in league_lower and 'france' in league_lower):
+        return 5
+    else:
+        return 999  # All other leagues
+
+
 def get_cache_entry(
     market: Optional[str] = None,
     team: Optional[str] = None,
@@ -69,22 +94,51 @@ def get_cache_entry(
             normalized_player = normalize_key(player)
             normalized_sport = normalize_key(sport) if sport else None
             
-            # First, resolve player alias to player_id
+            # Search for player in BOTH player_aliases AND players table
+            # 1. Check player_aliases
             cursor.execute("""
                 SELECT DISTINCT player_id FROM player_aliases
                 WHERE LOWER(alias) = ?
             """, (normalized_player,))
-            player_ids = [row[0] for row in cursor.fetchall()]
+            player_ids_from_aliases = [row[0] for row in cursor.fetchall()]
+            
+            # 2. Check players table directly
+            cursor.execute("""
+                SELECT DISTINCT id FROM players
+                WHERE LOWER(name) LIKE ? OR LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ?
+            """, (f"%{normalized_player}%", f"%{normalized_player}%", f"%{normalized_player}%"))
+            player_ids_from_main = [row[0] for row in cursor.fetchall()]
+            
+            player_ids = list(set(player_ids_from_aliases + player_ids_from_main))
             
             if not player_ids:
                 return None
             
-            # Then, resolve team alias to team_id
+            # Search for team in BOTH team_aliases AND teams table
+            # 1. Check team_aliases
             cursor.execute("""
                 SELECT DISTINCT team_id FROM team_aliases
                 WHERE LOWER(alias) = ?
             """, (normalized_team,))
-            team_ids = [row[0] for row in cursor.fetchall()]
+            team_ids_from_aliases = [row[0] for row in cursor.fetchall()]
+            
+            # 2. Check teams table directly
+            if normalized_sport:
+                cursor.execute("""
+                    SELECT DISTINCT t.id FROM teams t
+                    LEFT JOIN sports s ON t.sport_id = s.id
+                    WHERE (LOWER(t.name) LIKE ? OR LOWER(t.nickname) LIKE ? OR LOWER(t.abbreviation) = ?)
+                      AND LOWER(s.name) = ?
+                """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team, normalized_sport))
+            else:
+                cursor.execute("""
+                    SELECT DISTINCT id FROM teams
+                    WHERE LOWER(name) LIKE ? OR LOWER(nickname) LIKE ? OR LOWER(abbreviation) = ?
+                """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team))
+            
+            team_ids_from_main = [row[0] for row in cursor.fetchall()]
+            
+            team_ids = list(set(team_ids_from_aliases + team_ids_from_main))
             
             if not team_ids:
                 return None
@@ -168,12 +222,32 @@ def get_cache_entry(
             normalized_team = normalize_key(team)
             normalized_sport = normalize_key(sport) if sport else None
             
-            # First, resolve team alias to team_id(s)
+            # Search in BOTH team_aliases AND teams table
+            # 1. Check team_aliases table
             cursor.execute("""
                 SELECT DISTINCT team_id FROM team_aliases
                 WHERE LOWER(alias) = ?
             """, (normalized_team,))
-            team_ids = [row[0] for row in cursor.fetchall()]
+            team_ids_from_aliases = [row[0] for row in cursor.fetchall()]
+            
+            # 2. Check teams table directly (name, nickname, abbreviation)
+            if normalized_sport:
+                cursor.execute("""
+                    SELECT DISTINCT t.id FROM teams t
+                    LEFT JOIN sports s ON t.sport_id = s.id
+                    WHERE (LOWER(t.name) LIKE ? OR LOWER(t.nickname) LIKE ? OR LOWER(t.abbreviation) = ?)
+                      AND LOWER(s.name) = ?
+                """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team, normalized_sport))
+            else:
+                cursor.execute("""
+                    SELECT DISTINCT id FROM teams
+                    WHERE LOWER(name) LIKE ? OR LOWER(nickname) LIKE ? OR LOWER(abbreviation) = ?
+                """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team))
+            
+            team_ids_from_main = [row[0] for row in cursor.fetchall()]
+            
+            # Combine and deduplicate team IDs
+            team_ids = list(set(team_ids_from_aliases + team_ids_from_main))
             
             if not team_ids:
                 return None
@@ -236,6 +310,9 @@ def get_cache_entry(
                         "player_count": len(players)
                     })
                 
+                # Sort teams by league priority
+                teams_data.sort(key=lambda x: (get_league_priority(x.get("league", "")), x.get("normalized_name", "")))
+                
                 result_data = {
                     "type": "team",
                     "query": team,
@@ -250,12 +327,23 @@ def get_cache_entry(
         if player:
             normalized_player = normalize_key(player)
             
-            # First, resolve player alias to player_id(s)
+            # Search in BOTH player_aliases AND players table
+            # 1. Check player_aliases table
             cursor.execute("""
                 SELECT DISTINCT player_id FROM player_aliases
                 WHERE LOWER(alias) = ?
             """, (normalized_player,))
-            player_ids = [row[0] for row in cursor.fetchall()]
+            player_ids_from_aliases = [row[0] for row in cursor.fetchall()]
+            
+            # 2. Check players table directly (name, first_name, last_name)
+            cursor.execute("""
+                SELECT DISTINCT id FROM players
+                WHERE LOWER(name) LIKE ? OR LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ?
+            """, (f"%{normalized_player}%", f"%{normalized_player}%", f"%{normalized_player}%"))
+            player_ids_from_main = [row[0] for row in cursor.fetchall()]
+            
+            # Combine and deduplicate player IDs
+            player_ids = list(set(player_ids_from_aliases + player_ids_from_main))
             
             if not player_ids:
                 return None
@@ -294,6 +382,9 @@ def get_cache_entry(
                         "sport": result["sport_name"]
                     })
                 
+                # Sort players by league priority
+                players_data.sort(key=lambda x: (get_league_priority(x.get("league", "")), x.get("normalized_name", "")))
+                
                 result_data = {
                     "type": "player",
                     "query": player,
@@ -309,12 +400,32 @@ def get_cache_entry(
             normalized_league = normalize_key(league)
             normalized_sport = normalize_key(sport) if sport else None
             
-            # First, resolve league alias to league_id(s)
+            # Search in BOTH league_aliases AND leagues table
+            # 1. Check league_aliases table
             cursor.execute("""
                 SELECT DISTINCT league_id FROM league_aliases
                 WHERE LOWER(alias) = ?
             """, (normalized_league,))
-            league_ids = [row[0] for row in cursor.fetchall()]
+            league_ids_from_aliases = [row[0] for row in cursor.fetchall()]
+            
+            # 2. Check leagues table directly (name)
+            if normalized_sport:
+                cursor.execute("""
+                    SELECT DISTINCT l.id FROM leagues l
+                    LEFT JOIN sports s ON l.sport_id = s.id
+                    WHERE LOWER(l.name) LIKE ?
+                      AND LOWER(s.name) = ?
+                """, (f"%{normalized_league}%", normalized_sport))
+            else:
+                cursor.execute("""
+                    SELECT DISTINCT id FROM leagues
+                    WHERE LOWER(name) LIKE ?
+                """, (f"%{normalized_league}%",))
+            
+            league_ids_from_main = [row[0] for row in cursor.fetchall()]
+            
+            # Combine and deduplicate league IDs
+            league_ids = list(set(league_ids_from_aliases + league_ids_from_main))
             
             if not league_ids:
                 return None
@@ -365,6 +476,9 @@ def get_cache_entry(
                         "teams": teams,
                         "team_count": len(teams)
                     })
+                
+                # Sort leagues by priority
+                leagues_data.sort(key=lambda x: (get_league_priority(x.get("normalized_name", "")), x.get("normalized_name", "")))
                 
                 result_data = {
                     "type": "league",
