@@ -4,11 +4,12 @@ Provides normalized cache lookups for sports betting markets, teams, and players
 Includes Redis caching layer for improved performance.
 """
 
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Body
 from fastapi.responses import JSONResponse
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+from pydantic import BaseModel
 import uvicorn
-from cache_db import get_cache_entry
+from cache_db import get_cache_entry, get_batch_cache_entries, get_precision_batch_cache_entries
 from redis_cache import get_cache_stats, clear_all_cache, invalidate_cache
 
 app = FastAPI(
@@ -16,6 +17,27 @@ app = FastAPI(
     description="Sports betting cache normalization service with Redis caching",
     version="2.0.0"
 )
+
+# Request models for batch endpoints
+class BatchQueryRequest(BaseModel):
+    """Request model for batch cache queries"""
+    team: Optional[List[str]] = None
+    player: Optional[List[str]] = None
+    market: Optional[List[str]] = None
+    sport: Optional[str] = None  # Sport context for team/league queries
+    league: Optional[List[str]] = None
+
+class PrecisionBatchItem(BaseModel):
+    """Single precision query item"""
+    team: Optional[str] = None
+    player: Optional[str] = None
+    market: Optional[str] = None
+    sport: Optional[str] = None
+    league: Optional[str] = None
+
+class PrecisionBatchRequest(BaseModel):
+    """Request model for precision batch queries"""
+    queries: List[PrecisionBatchItem]
 
 @app.get("/")
 async def root():
@@ -186,6 +208,133 @@ async def get_cache(
             status_code=500,
             detail=f"Error retrieving cache entry: {str(e)}"
         )
+
+@app.post("/cache/batch")
+async def get_batch_cache(request: BatchQueryRequest = Body(...)) -> JSONResponse:
+    """
+    Batch cache query endpoint - independent searches for multiple items per category.
+    
+    Queries multiple teams, players, markets, and leagues in a single request.
+    Each item is searched independently (not combined for precision).
+    
+    Request body:
+    {
+        "team": ["Lakers", "Warriors", "Bulls"],
+        "player": ["LeBron James", "Stephen Curry"],
+        "market": ["moneyline", "spread", "total"],
+        "sport": "Basketball",  // Optional: context for team/league searches
+        "league": ["NBA", "EuroLeague"]
+    }
+    
+    Response:
+    {
+        "team": {
+            "Lakers": {...},
+            "Warriors": {...},
+            "Bulls": null  // if not found
+        },
+        "player": {
+            "LeBron James": {...},
+            "Stephen Curry": {...}
+        },
+        "market": {
+            "moneyline": {...},
+            "spread": {...},
+            "total": {...}
+        },
+        "league": {
+            "NBA": {...},
+            "EuroLeague": null
+        }
+    }
+    """
+    try:
+        result = get_batch_cache_entries(
+            teams=request.team,
+            players=request.player,
+            markets=request.market,
+            sport=request.sport,
+            leagues=request.league
+        )
+        
+        return JSONResponse(
+            status_code=200,
+            content=result
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing batch query: {str(e)}"
+        )
+
+@app.post("/cache/batch/precision")
+async def get_precision_batch_cache(request: PrecisionBatchRequest = Body(...)) -> JSONResponse:
+    """
+    Precision batch cache query endpoint - combined parameter searches in batch.
+    
+    Allows multiple precise queries where parameters can be combined for specificity.
+    Each query item can have multiple parameters that narrow the search.
+    
+    Request body:
+    {
+        "queries": [
+            {"team": "Lakers", "player": "LeBron James", "sport": "Basketball"},
+            {"team": "Warriors", "sport": "Basketball"},
+            {"player": "Messi", "sport": "Soccer"},
+            {"market": "moneyline"},
+            {"league": "Premier League", "sport": "Soccer"}
+        ]
+    }
+    
+    Response:
+    {
+        "results": [
+            {
+                "query": {"team": "Lakers", "player": "LeBron James", "sport": "Basketball"},
+                "found": true,
+                "data": {...}
+            },
+            {
+                "query": {"team": "Warriors", "sport": "Basketball"},
+                "found": true,
+                "data": {...}
+            },
+            {
+                "query": {"player": "Messi", "sport": "Soccer"},
+                "found": true,
+                "data": {...}
+            },
+            {
+                "query": {"market": "moneyline"},
+                "found": true,
+                "data": {...}
+            },
+            {
+                "query": {"league": "Premier League", "sport": "Soccer"},
+                "found": false,
+                "data": null
+            }
+        ],
+        "total_queries": 5,
+        "successful": 4,
+        "failed": 1
+    }
+    """
+    try:
+        result = get_precision_batch_cache_entries(request.queries)
+        
+        return JSONResponse(
+            status_code=200,
+            content=result
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing precision batch query: {str(e)}"
+        )
+
 
 if __name__ == "__main__":
     # Run the server on port 8001
