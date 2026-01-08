@@ -595,3 +595,137 @@ def get_all_markets() -> List[Dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
     finally:
         conn.close()
+
+
+def get_batch_cache_entries(
+    teams: Optional[List[str]] = None,
+    players: Optional[List[str]] = None,
+    markets: Optional[List[str]] = None,
+    sport: Optional[str] = None,
+    leagues: Optional[List[str]] = None
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Batch query for multiple items across categories.
+    Each item is searched independently within its category.
+    
+    Args:
+        teams: List of team names to look up
+        players: List of player names to look up
+        markets: List of market types to look up
+        sport: Sport context for team/league queries
+        leagues: List of league names to look up
+    
+    Returns:
+        Dictionary with categories containing item results:
+        {
+            "team": {"Lakers": {...}, "Warriors": null},
+            "player": {"LeBron": {...}},
+            "market": {"moneyline": {...}},
+            "league": {"NBA": {...}}
+        }
+    """
+    result = {}
+    
+    # Process teams
+    if teams:
+        result["team"] = {}
+        for team_name in teams:
+            entry = get_cache_entry(team=team_name, sport=sport)
+            result["team"][team_name] = entry
+    
+    # Process players
+    if players:
+        result["player"] = {}
+        for player_name in players:
+            entry = get_cache_entry(player=player_name)
+            result["player"][player_name] = entry
+    
+    # Process markets
+    if markets:
+        result["market"] = {}
+        for market_name in markets:
+            entry = get_cache_entry(market=market_name)
+            result["market"][market_name] = entry
+    
+    # Process leagues
+    if leagues:
+        result["league"] = {}
+        for league_name in leagues:
+            entry = get_cache_entry(league=league_name, sport=sport)
+            result["league"][league_name] = entry
+    
+    return result
+
+
+def get_precision_batch_cache_entries(queries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Precision batch query where each query can combine multiple parameters.
+    
+    Args:
+        queries: List of query dictionaries, each with optional parameters:
+                 team, player, market, sport, league
+    
+    Returns:
+        Dictionary with results array and statistics:
+        {
+            "results": [
+                {"query": {...}, "found": true, "data": {...}},
+                {"query": {...}, "found": false, "data": null}
+            ],
+            "total_queries": 5,
+            "successful": 3,
+            "failed": 2
+        }
+    """
+    results = []
+    successful = 0
+    failed = 0
+    
+    for query_item in queries:
+        # Convert Pydantic model to dict if needed
+        if hasattr(query_item, 'model_dump'):
+            query_dict = query_item.model_dump(exclude_none=True)
+        elif hasattr(query_item, 'dict'):
+            query_dict = query_item.dict(exclude_none=True)
+        else:
+            query_dict = query_item
+        
+        # Extract parameters from query item
+        team = query_dict.get("team")
+        player = query_dict.get("player")
+        market = query_dict.get("market")
+        sport = query_dict.get("sport")
+        league = query_dict.get("league")
+        
+        # Execute the query
+        entry = get_cache_entry(
+            team=team,
+            player=player,
+            market=market,
+            sport=sport,
+            league=league
+        )
+        
+        # Build result for this query
+        if entry:
+            results.append({
+                "query": query_dict,
+                "found": True,
+                "data": entry
+            })
+            successful += 1
+        else:
+            results.append({
+                "query": query_dict,
+                "found": False,
+                "data": None
+            })
+            failed += 1
+    
+    return {
+        "results": results,
+        "total_queries": len(queries),
+        "successful": successful,
+        "failed": failed
+    }
+
