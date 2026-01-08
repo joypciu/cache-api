@@ -6,6 +6,7 @@ Provides database access to sports data using SQLite with Redis caching.
 import sqlite3
 import os
 from typing import Optional, Dict, Any, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from redis_cache import get_cached_data, set_cached_data
 
 # Database file path
@@ -607,6 +608,7 @@ def get_batch_cache_entries(
     """
     Batch query for multiple items across categories.
     Each item is searched independently within its category.
+    Uses parallel processing for improved performance.
     
     Args:
         teams: List of team names to look up
@@ -626,33 +628,47 @@ def get_batch_cache_entries(
     """
     result = {}
     
-    # Process teams
-    if teams:
-        result["team"] = {}
-        for team_name in teams:
-            entry = get_cache_entry(team=team_name, sport=sport)
-            result["team"][team_name] = entry
-    
-    # Process players
-    if players:
-        result["player"] = {}
-        for player_name in players:
-            entry = get_cache_entry(player=player_name)
-            result["player"][player_name] = entry
-    
-    # Process markets
-    if markets:
-        result["market"] = {}
-        for market_name in markets:
-            entry = get_cache_entry(market=market_name)
-            result["market"][market_name] = entry
-    
-    # Process leagues
-    if leagues:
-        result["league"] = {}
-        for league_name in leagues:
-            entry = get_cache_entry(league=league_name, sport=sport)
-            result["league"][league_name] = entry
+    # Use ThreadPoolExecutor for parallel queries
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {}
+        
+        # Submit all team queries
+        if teams:
+            result["team"] = {}
+            for team_name in teams:
+                future = executor.submit(get_cache_entry, team=team_name, sport=sport)
+                futures[future] = ("team", team_name)
+        
+        # Submit all player queries
+        if players:
+            result["player"] = {}
+            for player_name in players:
+                future = executor.submit(get_cache_entry, player=player_name)
+                futures[future] = ("player", player_name)
+        
+        # Submit all market queries
+        if markets:
+            result["market"] = {}
+            for market_name in markets:
+                future = executor.submit(get_cache_entry, market=market_name)
+                futures[future] = ("market", market_name)
+        
+        # Submit all league queries
+        if leagues:
+            result["league"] = {}
+            for league_name in leagues:
+                future = executor.submit(get_cache_entry, league=league_name, sport=sport)
+                futures[future] = ("league", league_name)
+        
+        # Collect results as they complete
+        for future in as_completed(futures):
+            category, name = futures[future]
+            try:
+                entry = future.result()
+                result[category][name] = entry
+            except Exception as e:
+                # Handle errors gracefully
+                result[category][name] = None
     
     return result
 
@@ -660,6 +676,7 @@ def get_batch_cache_entries(
 def get_precision_batch_cache_entries(queries: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Precision batch query where each query can combine multiple parameters.
+    Uses parallel processing for improved performance.
     
     Args:
         queries: List of query dictionaries, each with optional parameters:
@@ -681,46 +698,63 @@ def get_precision_batch_cache_entries(queries: List[Dict[str, Any]]) -> Dict[str
     successful = 0
     failed = 0
     
-    for query_item in queries:
-        # Convert Pydantic model to dict if needed
-        if hasattr(query_item, 'model_dump'):
-            query_dict = query_item.model_dump(exclude_none=True)
-        elif hasattr(query_item, 'dict'):
-            query_dict = query_item.dict(exclude_none=True)
-        else:
-            query_dict = query_item
+    # Use ThreadPoolExecutor for parallel queries
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {}
         
-        # Extract parameters from query item
-        team = query_dict.get("team")
-        player = query_dict.get("player")
-        market = query_dict.get("market")
-        sport = query_dict.get("sport")
-        league = query_dict.get("league")
+        for idx, query_item in enumerate(queries):
+            # Convert Pydantic model to dict if needed
+            if hasattr(query_item, 'model_dump'):
+                query_dict = query_item.model_dump(exclude_none=True)
+            elif hasattr(query_item, 'dict'):
+                query_dict = query_item.dict(exclude_none=True)
+            else:
+                query_dict = query_item
+            
+            # Submit query to executor
+            future = executor.submit(
+                get_cache_entry,
+                team=query_dict.get("team"),
+                player=query_dict.get("player"),
+                market=query_dict.get("market"),
+                sport=query_dict.get("sport"),
+                league=query_dict.get("league")
+            )
+            futures[future] = (idx, query_dict)
         
-        # Execute the query
-        entry = get_cache_entry(
-            team=team,
-            player=player,
-            market=market,
-            sport=sport,
-            league=league
-        )
+        # Collect results in order
+        results_dict = {}
+        for future in as_completed(futures):
+            idx, query_dict = futures[future]
+            try:
+                entry = future.result()
+                if entry:
+                    results_dict[idx] = {
+                        "query": query_dict,
+                        "found": True,
+                        "data": entry
+                    }
+                else:
+                    results_dict[idx] = {
+                        "query": query_dict,
+                        "found": False,
+                        "data": None
+                    }
+            except Exception as e:
+                results_dict[idx] = {
+                    "query": query_dict,
+                    "found": False,
+                    "data": None
+                }
         
-        # Build result for this query
-        if entry:
-            results.append({
-                "query": query_dict,
-                "found": True,
-                "data": entry
-            })
-            successful += 1
-        else:
-            results.append({
-                "query": query_dict,
-                "found": False,
-                "data": None
-            })
-            failed += 1
+        # Sort results by original order
+        for idx in sorted(results_dict.keys()):
+            result = results_dict[idx]
+            results.append(result)
+            if result["found"]:
+                successful += 1
+            else:
+                failed += 1
     
     return {
         "results": results,
