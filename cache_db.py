@@ -14,9 +14,15 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "sports_data.db")
 
 
 def get_db_connection():
-    """Create and return a database connection"""
-    conn = sqlite3.connect(DB_PATH)
+    """Create and return a database connection with optimizations"""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    # Enable WAL mode for better concurrent read performance
+    conn.execute("PRAGMA journal_mode=WAL")
+    # Increase cache size (default is 2MB, set to 10MB)
+    conn.execute("PRAGMA cache_size=-10000")
+    # Use memory for temporary tables
+    conn.execute("PRAGMA temp_store=MEMORY")
     return conn
 
 
@@ -628,8 +634,9 @@ def get_batch_cache_entries(
     """
     result = {}
     
-    # Use ThreadPoolExecutor for parallel queries
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    # Use ThreadPoolExecutor for parallel queries with more workers
+    # Increased from 10 to 20 for better parallelization
+    with ThreadPoolExecutor(max_workers=20) as executor:
         futures = {}
         
         # Submit all team queries
@@ -698,8 +705,9 @@ def get_precision_batch_cache_entries(queries: List[Dict[str, Any]]) -> Dict[str
     successful = 0
     failed = 0
     
-    # Use ThreadPoolExecutor for parallel queries
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    # Use ThreadPoolExecutor for parallel queries with more workers
+    # Increased from 10 to 20 for better parallelization
+    with ThreadPoolExecutor(max_workers=20) as executor:
         futures = {}
         
         for idx, query_item in enumerate(queries):
@@ -762,4 +770,5 @@ def get_precision_batch_cache_entries(queries: List[Dict[str, Any]]) -> Dict[str
         "successful": successful,
         "failed": failed
     }
+
 
