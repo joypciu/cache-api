@@ -4,13 +4,53 @@ Provides normalized cache lookups for sports betting markets, teams, and players
 Includes Redis caching layer for improved performance.
 """
 
-from fastapi import FastAPI, Query, HTTPException, Body
+from fastapi import FastAPI, Query, HTTPException, Body, Security, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 import uvicorn
+import os
+from dotenv import load_dotenv
 from cache_db import get_cache_entry, get_batch_cache_entries, get_precision_batch_cache_entries
 from redis_cache import get_cache_stats, clear_all_cache, invalidate_cache
+
+# Load environment variables
+load_dotenv()
+
+# Security configuration
+security = HTTPBearer()
+VALID_API_TOKENS = set(filter(None, [
+    os.getenv('API_TOKEN'),
+    os.getenv('API_TOKEN_1'),
+    os.getenv('API_TOKEN_2'),
+    os.getenv('API_TOKEN_3'),
+]))
+
+def verify_token(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
+    """
+    Verify the API token from the Authorization header.
+    
+    Raises:
+        HTTPException: If token is invalid or missing
+    
+    Returns:
+        The validated token
+    """
+    if not VALID_API_TOKENS:
+        raise HTTPException(
+            status_code=500,
+            detail="No API tokens configured. Please set API_TOKEN in environment variables."
+        )
+    
+    token = credentials.credentials
+    if token not in VALID_API_TOKENS:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired API token"
+        )
+    
+    return token
 
 app = FastAPI(
     title="Cache API",
@@ -50,8 +90,8 @@ async def root():
     }
 
 @app.get("/health")
-async def health_check():
-    """Health check for monitoring"""
+async def health_check(token: str = Depends(verify_token)):
+    """Health check for monitoring (requires authentication)"""
     stats = get_cache_stats()
     return {
         "status": "healthy",
@@ -59,8 +99,8 @@ async def health_check():
     }
 
 @app.get("/cache/stats")
-async def cache_statistics():
-    """Get detailed cache statistics"""
+async def cache_statistics(token: str = Depends(verify_token)):
+    """Get detailed cache statistics (requires authentication)"""
     stats = get_cache_stats()
     return JSONResponse(
         status_code=200,
@@ -68,8 +108,8 @@ async def cache_statistics():
     )
 
 @app.delete("/cache/clear")
-async def clear_cache():
-    """Clear all cache entries"""
+async def clear_cache(token: str = Depends(verify_token)):
+    """Clear all cache entries (requires authentication)"""
     success = clear_all_cache()
     
     if success:
@@ -92,9 +132,10 @@ async def invalidate_specific_cache(
     team: Optional[str] = Query(None),
     player: Optional[str] = Query(None),
     sport: Optional[str] = Query(None),
-    league: Optional[str] = Query(None)
+    league: Optional[str] = Query(None),
+    token: str = Depends(verify_token)
 ):
-    """Invalidate specific cache entry"""
+    """Invalidate specific cache entry (requires authentication)"""
     if not any([market, team, player, league]):
         raise HTTPException(
             status_code=400,
@@ -126,10 +167,11 @@ async def get_cache(
     team: Optional[str] = Query(None, description="Team name to look up"),
     player: Optional[str] = Query(None, description="Player name to look up"),
     sport: Optional[str] = Query(None, description="Sport name (required when searching by team or league)"),
-    league: Optional[str] = Query(None, description="League name to look up")
+    league: Optional[str] = Query(None, description="League name to look up"),
+    token: str = Depends(verify_token)
 ) -> JSONResponse:
     """
-    Get normalized cache entry for market, team, player, or league.
+    Get normalized cache entry for market, team, player, or league (requires authentication).
     
     Parameters:
     - market: Market type to look up
@@ -210,9 +252,9 @@ async def get_cache(
         )
 
 @app.post("/cache/batch")
-async def get_batch_cache(request: BatchQueryRequest = Body(...)) -> JSONResponse:
+async def get_batch_cache(request: BatchQueryRequest = Body(...), token: str = Depends(verify_token)) -> JSONResponse:
     """
-    Batch cache query endpoint - independent searches for multiple items per category.
+    Batch cache query endpoint - independent searches for multiple items per category (requires authentication).
     
     Queries multiple teams, players, markets, and leagues in a single request.
     Each item is searched independently (not combined for precision).
@@ -269,9 +311,9 @@ async def get_batch_cache(request: BatchQueryRequest = Body(...)) -> JSONRespons
         )
 
 @app.post("/cache/batch/precision")
-async def get_precision_batch_cache(request: PrecisionBatchRequest = Body(...)) -> JSONResponse:
+async def get_precision_batch_cache(request: PrecisionBatchRequest = Body(...), token: str = Depends(verify_token)) -> JSONResponse:
     """
-    Precision batch cache query endpoint - combined parameter searches in batch.
+    Precision batch cache query endpoint - combined parameter searches in batch (requires authentication).
     
     Allows multiple precise queries where parameters can be combined for specificity.
     Each query item can have multiple parameters that narrow the search.

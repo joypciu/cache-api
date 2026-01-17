@@ -1,9 +1,10 @@
 # Cache API with Redis Caching
 
-A high-performance FastAPI-based cache normalization service for sports betting data with Redis caching layer.
+A high-performance FastAPI-based cache normalization service for sports betting data with Redis caching layer and token-based authentication.
 
 ## Features
 
+- **🔒 Token Authentication**: Secure API access with Bearer token authentication
 - **🚀 Redis Caching**: 10-100x faster response times for cached queries
 - **RESTful API** for cache lookups
 - **Flexible queries** supporting market, team, player, and league parameters
@@ -13,13 +14,54 @@ A high-performance FastAPI-based cache normalization service for sports betting 
 - **Cache management** endpoints for statistics and invalidation
 - **Graceful fallback** to direct database queries if Redis is unavailable
 
+## Quick Start
+
+### 1. Authentication Setup
+
+Before using the API, configure your authentication tokens:
+
+```bash
+# Copy the example environment file
+cp .env.example .env
+
+# Edit .env and set your API token
+# API_TOKEN=your-secure-token-here
+```
+
+**Generate a secure token:**
+```bash
+# Using Python
+python -c "import secrets; print(f'API_TOKEN={secrets.token_urlsafe(32)}')"
+```
+
+See [AUTH_GUIDE.md](AUTH_GUIDE.md) for detailed authentication documentation.
+
+### 2. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Run the API
+
+```bash
+python main.py
+```
+
 ## API Endpoints
+
+**Note:** All endpoints except `/` require authentication via the `Authorization: Bearer <token>` header.
 
 ### Cache Query Endpoint
 
-**GET /cache**
+**GET /cache** 🔒
 
 Retrieve normalized cache entries with Redis caching.
+
+**Headers:**
+```
+Authorization: Bearer your-api-token-here
+```
 
 **Parameters:**
 
@@ -48,49 +90,61 @@ Retrieve normalized cache entries with Redis caching.
 
 ```bash
 # Look up a team (sport is required)
-curl "http://142.44.160.36:8001/cache?team=Lakers&sport=Basketball"
+curl -H "Authorization: Bearer your-api-token-here" \
+  "http://142.44.160.36:8001/cache?team=Lakers&sport=Basketball"
 
 # Look up a league with all its teams
-curl "http://142.44.160.36:8001/cache?league=Premier%20League&sport=Soccer"
+curl -H "Authorization: Bearer your-api-token-here" \
+  "http://142.44.160.36:8001/cache?league=Premier%20League&sport=Soccer"
 
 # Look up a player
-curl "http://142.44.160.36:8001/cache?player=LeBron%20James"
+curl -H "Authorization: Bearer your-api-token-here" \
+  "http://142.44.160.36:8001/cache?player=LeBron%20James"
 
 # Look up a specific player on a specific team (most precise)
-curl "http://142.44.160.36:8001/cache?player=Kylian%20Mbappé&team=Real%20Madrid%20CF"
+curl -H "Authorization: Bearer your-api-token-here" \
+  "http://142.44.160.36:8001/cache?player=Kylian%20Mbappé&team=Real%20Madrid%20CF"
 
 # Look up a market
-curl "http://142.44.160.36:8001/cache?market=moneyline"
+curl -H "Authorization: Bearer your-api-token-here" \
+  "http://142.44.160.36:8001/cache?market=moneyline"
 ```
 
 ### Cache Management Endpoints
 
-**GET /cache/stats**
+**GET /cache/stats** 🔒
 
 Get detailed cache statistics including Redis status, memory usage, and key count.
 
 ```bash
-curl http://142.44.160.36:8001/cache/stats
+curl -H "Authorization: Bearer your-api-token-here" \
+  http://142.44.160.36:8001/cache/stats
 ```
 
-**DELETE /cache/clear**
+**DELETE /cache/clear** 🔒
 
 Clear all cache entries from Redis.
 
 ```bash
-curl -X DELETE http://142.44.160.36:8001/cache/clear
+curl -X DELETE \
+  -H "Authorization: Bearer your-api-token-here" \
+  http://142.44.160.36:8001/cache/clear
 ```
 
-**DELETE /cache/invalidate**
+**DELETE /cache/invalidate** 🔒
 
 Invalidate specific cache entry.
 
 ```bash
 # Invalidate specific team cache
-curl -X DELETE "http://142.44.160.36:8001/cache/invalidate?team=Lakers&sport=Basketball"
+curl -X DELETE \
+  -H "Authorization: Bearer your-api-token-here" \
+  "http://142.44.160.36:8001/cache/invalidate?team=Lakers&sport=Basketball"
 
 # Invalidate specific player cache
-curl -X DELETE "http://142.44.160.36:8001/cache/invalidate?player=LeBron%20James"
+curl -X DELETE \
+  -H "Authorization: Bearer your-api-token-here" \
+  "http://142.44.160.36:8001/cache/invalidate?player=LeBron%20James"
 ```
 
 **Response Format:**
@@ -142,17 +196,18 @@ curl -X DELETE "http://142.44.160.36:8001/cache/invalidate?player=LeBron%20James
 
 ### Health Endpoints
 
-**GET /health**
+**GET /health** 🔒
 
 Health check endpoint with cache statistics for monitoring.
 
 ```bash
-curl http://142.44.160.36:8001/health
+curl -H "Authorization: Bearer your-api-token-here" \
+  http://142.44.160.36:8001/health
 ```
 
-**GET /**
+**GET /** ✅ Public
 
-Root endpoint showing service status and features.
+Root endpoint showing service status and features (no authentication required).
 
 ```bash
 curl http://142.44.160.36:8001/
@@ -239,16 +294,20 @@ The API will be available at `http://localhost:8001`
 
 ```bash
 # Test health endpoint
-curl http://localhost:8001/health
+curl -H "Authorization: Bearer your-api-token-here" \
+  http://localhost:8001/health
 
 # Test cache statistics
-curl http://localhost:8001/cache/stats
+curl -H "Authorization: Bearer your-api-token-here" \
+  http://localhost:8001/cache/stats
 
 # Test team query
-curl "http://localhost:8001/cache?team=Lakers&sport=Basketball"
+curl -H "Authorization: Bearer your-api-token-here" \
+  "http://localhost:8001/cache?team=Lakers&sport=Basketball"
 
 # Test player query
-curl "http://localhost:8001/cache?player=LeBron%20James"
+curl -H "Authorization: Bearer your-api-token-here" \
+  "http://localhost:8001/cache?player=LeBron%20James"
 ```
 
 ## VPS Deployment
@@ -354,10 +413,12 @@ sudo systemctl status cache-api
 sudo systemctl status redis-server
 
 # Test API health
-curl http://localhost:8001/health
+curl -H "Authorization: Bearer your-api-token-here" \
+  http://localhost:8001/health
 
 # Check cache statistics
-curl http://localhost:8001/cache/stats
+curl -H "Authorization: Bearer your-api-token-here" \
+  http://localhost:8001/cache/stats
 
 # View logs
 sudo journalctl -u cache-api -n 50
@@ -481,7 +542,8 @@ Monitor cache performance:
 
 ```bash
 # Get cache statistics via API
-curl http://localhost:8001/cache/stats
+curl -H "Authorization: Bearer your-api-token-here" \
+  http://localhost:8001/cache/stats
 
 # Monitor Redis directly
 redis-cli INFO
@@ -618,13 +680,15 @@ The service runs on port **8001** by default. To change:
 
 ```bash
 # Check cache hit/miss ratio
-curl http://localhost:8001/cache/stats
+curl -H "Authorization: Bearer your-api-token-here" \
+  http://localhost:8001/cache/stats
 
 # Monitor Redis performance
 redis-cli --stat
 
 # Check API response time
-time curl http://localhost:8001/cache?team=Lakers&sport=Basketball
+time curl -H "Authorization: Bearer your-api-token-here" \
+  http://localhost:8001/cache?team=Lakers&sport=Basketball
 ```
 
 ## Security
@@ -714,10 +778,13 @@ sudo journalctl -u redis-server -n 50
 
 ```bash
 # Check cache stats
-curl http://localhost:8001/cache/stats
+curl -H "Authorization: Bearer your-api-token-here" \
+  http://localhost:8001/cache/stats
 
 # Clear cache
-curl -X DELETE http://localhost:8001/cache/clear
+curl -X DELETE \
+  -H "Authorization: Bearer your-api-token-here" \
+  http://localhost:8001/cache/clear
 
 # Check Redis keys
 redis-cli KEYS 'cache:*'
