@@ -4,3 +4,4 @@ pydantic
 aiofiles
 redis
 hiredis
+python-dotenv

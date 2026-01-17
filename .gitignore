@@ -82,3 +82,11 @@ logs/
 *.sqlite3
 # Allow sports_data.db to be tracked
 !sports_data.db
+
+# ignore test files
+test_*.py
+*.test.py
+tests/
+test/
+test_data/
+test_data.json

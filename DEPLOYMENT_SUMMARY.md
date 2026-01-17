@@ -1,8 +1,25 @@
 # Deployment Summary - Cache API with Redis
 
-## Changes Completed ✅
+## Recent Changes \u2705
 
-### 1. Collected Fresh Code from GitHub
+### 1. Token-Based Authentication Added
+
+- \u2705 Bearer token authentication implemented
+- \u2705 Supports multiple API tokens (up to 4)
+- \u2705 All endpoints except `/` (root) now require authentication
+- \u2705 Environment-based token configuration
+- \u2705 Comprehensive authentication documentation
+
+**Files Modified:**
+
+- `main.py` - Added authentication middleware and token verification
+- `requirements.txt` - Added python-dotenv for environment management
+- `.env.example` - Added API token configuration
+- `AUTH_GUIDE.md` - New comprehensive authentication guide
+- `README.md` - Updated with authentication examples
+- `VPS_SETUP.md` - Added token configuration steps
+
+### 2. Collected Fresh Code from GitHub
 
 - ✅ Pulled latest changes from `main` branch
 - ✅ Fetched PR #12 branch (`add-sports-database`)
@@ -213,28 +230,88 @@ Make sure these secrets are configured in your GitHub repository:
 - `VPS_SSH_KEY` - Your private SSH key
 - `VPS_PORT` - SSH port (22)
 
+## Deploying with Authentication
+
+### \ud83d\udd11 Step 1: Configure API Token on VPS (IMPORTANT - Do First!)
+
+**Before pushing code to GitHub, configure the token on your VPS:**
+
+```bash
+# SSH into your VPS
+ssh ubuntu@142.44.160.36
+
+# Navigate to service directory
+cd /home/ubuntu/services/cache-api
+
+# Edit .env file
+nano .env
+
+# Add your API token (generate a secure one):
+# API_TOKEN=your-secure-production-token-here
+# Save and exit
+
+# Verify token is set
+grep API_TOKEN .env
+```
+
+**Generate a secure token:**
+```bash
+python3 -c "import secrets; print(f'API_TOKEN={secrets.token_urlsafe(32)}')"
+```
+
+### \ud83d\ude80 Step 2: Push Code to GitHub
+
+Once the token is configured on VPS:
+
+```bash
+# From your local machine
+git add .
+git commit -m "Add token-based authentication"
+git push origin main
+```
+
+GitHub Actions will automatically deploy with authentication enabled.
+
+### \u2705 Step 3: Test Authentication
+
+After deployment:
+
+```bash
+# Test with authentication (replace with your actual token)
+curl -H "Authorization: Bearer your-actual-token" \\\n  http://142.44.160.36:8001/health
+
+# Test without authentication (should fail)
+curl http://142.44.160.36:8001/health
+# Expected: {"detail": "Not authenticated"}
+```
+
 ## Testing the Deployment
 
 After deployment (either automated or manual):
 
 ```bash
+# Note: All endpoints now require authentication
+
 # Test health endpoint
-curl http://142.44.160.36:8001/health
+curl -H "Authorization: Bearer your-token" \\\n  http://142.44.160.36:8001/health
 
 # Test cache statistics
-curl http://142.44.160.36:8001/cache/stats
+curl -H "Authorization: Bearer your-token" \\\n  http://142.44.160.36:8001/cache/stats
 
 # Test team query (should be cached after first request)
-curl "http://142.44.160.36:8001/cache?team=Lakers&sport=Basketball"
+curl -H "Authorization: Bearer your-token" \\\n  "http://142.44.160.36:8001/cache?team=Lakers&sport=Basketball"
 
 # Test league query (new feature)
-curl "http://142.44.160.36:8001/cache?league=Premier%20League&sport=Soccer"
+curl -H "Authorization: Bearer your-token" \\\n  "http://142.44.160.36:8001/cache?league=Premier%20League&sport=Soccer"
 
 # Test player query
-curl "http://142.44.160.36:8001/cache?player=LeBron%20James"
+curl -H "Authorization: Bearer your-token" \\\n  "http://142.44.160.36:8001/cache?player=LeBron%20James"
 
 # Clear cache
-curl -X DELETE http://142.44.160.36:8001/cache/clear
+curl -X DELETE \\\n  -H "Authorization: Bearer your-token" \\\n  http://142.44.160.36:8001/cache/clear
+
+# Public endpoint (no auth required)
+curl http://142.44.160.36:8001/
 ```
 
 ## Monitoring

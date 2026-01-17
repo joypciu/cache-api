@@ -115,7 +115,34 @@ CACHE_TTL=3600
 # API Configuration
 API_HOST=0.0.0.0
 API_PORT=8001
+
+# API Authentication (REQUIRED)
+# Generate a secure token for production
+API_TOKEN=your-secure-production-token-here
+
+# Optional: Additional tokens for different services
+# API_TOKEN_1=token-for-service-1
+# API_TOKEN_2=token-for-service-2
+# API_TOKEN_3=token-for-service-3
 ```
+
+**🔑 Generate a Secure API Token:**
+
+```bash
+# Option 1: Using Python
+python3 -c "import secrets; print(f'API_TOKEN={secrets.token_urlsafe(32)}')"
+
+# Option 2: Using OpenSSL
+echo "API_TOKEN=$(openssl rand -base64 32)"
+
+# Copy the generated token and paste it into your .env file
+```
+
+⚠️ **IMPORTANT:** 
+- The API token is **required** for authentication
+- Keep your production token **secret** - never commit it to Git
+- Use different tokens for development and production
+- Save your token securely - you'll need it to make API requests
 
 ### 9. Install Systemd Service
 
@@ -136,7 +163,37 @@ sudo systemctl start cache-api
 sudo systemctl status cache-api
 ```
 
-### 10. Configure Firewall (if applicable)
+### 10. Verify API with Authentication
+
+```bash
+# Test with your API token (replace with your actual token from .env)
+curl -H "Authorization: Bearer your-actual-token-here" \
+  http://localhost:8001/health
+
+# Expected response:
+# {"status": "healthy", "cache": {...}}
+
+# Test without token (should fail with 401)
+curl http://localhost:8001/health
+
+# Expected response:
+# {"detail": "Not authenticated"}
+```
+
+**If authentication fails:**
+
+```bash
+# Check that API_TOKEN is set in .env
+grep API_TOKEN .env
+
+# Restart the service to reload environment variables
+sudo systemctl restart cache-api
+
+# Check logs for errors
+sudo journalctl -u cache-api -n 50
+```
+
+### 11. Configure Firewall (if applicable)
 
 ```bash
 # Allow port 8001 for the API
@@ -154,9 +211,36 @@ sudo ufw status
 
 ## GitHub Actions Setup
 
-### 1. Add GitHub Secrets
+### 1. Configure API Token on VPS (Before First Deployment)
 
-Go to your GitHub repository → Settings → Secrets and variables → Actions
+**\ud83d\udd11 IMPORTANT: Do this BEFORE pushing code with authentication enabled**
+
+```bash
+# SSH into your VPS
+ssh ubuntu@your-vps-ip
+
+# Navigate to service directory
+cd /home/ubuntu/services/cache-api
+
+# Edit .env file and add API token
+nano .env
+
+# Add this line with a secure token:
+# API_TOKEN=your-secure-production-token-here
+# Save and exit (Ctrl+X, Y, Enter)
+
+# Verify token is set
+grep API_TOKEN .env
+```
+
+\u26a0\ufe0f **Why do this first?**
+- GitHub Actions will pull new code with authentication enabled
+- Your existing `.env` file won't be overwritten
+- The service will start with authentication working immediately
+
+### 2. Add GitHub Secrets
+
+Go to your GitHub repository \u2192 Settings \u2192 Secrets and variables \u2192 Actions
 
 Add the following secrets:
 
@@ -165,7 +249,7 @@ Add the following secrets:
 - `VPS_SSH_KEY`: Your private SSH key
 - `VPS_PORT`: SSH port (usually `22`)
 
-### 2. Generate SSH Key (if needed)
+### 3. Generate SSH Key (if needed)
 
 On your local machine:
 
@@ -180,23 +264,54 @@ ssh-copy-id -i ~/.ssh/id_rsa.pub ubuntu@your-vps-ip
 cat ~/.ssh/id_rsa  # Copy this to VPS_SSH_KEY secret
 ```
 
-### 3. Test GitHub Actions Deployment
+### 4. Test GitHub Actions Deployment
+
+**First, verify your VPS has the API token configured:**
 
 ```bash
-# Make a small change and push to main branch
+# SSH to VPS and check
+ssh ubuntu@your-vps-ip
+cd /home/ubuntu/services/cache-api
+grep API_TOKEN .env  # Should show your token
+```
+
+**Then push your code:**
+
+```bash
+# From your local machine
 git add .
-git commit -m "Test deployment"
+git commit -m "Add authentication to cache API"
 git push origin main
 ```
 
 The GitHub Actions workflow will automatically:
 
 1. Check if Redis is installed (install if not)
-2. Pull latest code
-3. Install/update Python dependencies
+2. Pull latest code (with authentication)
+3. Install/update Python dependencies (including python-dotenv)
 4. Update systemd service
 5. Restart the API service
 6. Verify deployment
+
+**\u2705 Your existing `.env` file with API_TOKEN will NOT be overwritten!**
+
+### 5. Verify Deployment with Authentication
+
+After GitHub Actions completes:
+
+```bash
+# SSH into VPS
+ssh ubuntu@your-vps-ip
+
+# Test API with authentication
+curl -H "Authorization: Bearer your-actual-token" \\\n  http://localhost:8001/health
+
+# Check service logs
+sudo journalctl -u cache-api -n 50
+
+# View service status
+sudo systemctl status cache-api
+```
 
 ## Monitoring and Maintenance
 
@@ -232,14 +347,20 @@ redis-cli KEYS 'cache:*'
 ### Check API Endpoints
 
 ```bash
-# Health check
-curl http://localhost:8001/health
+# Health check (requires authentication)
+curl -H "Authorization: Bearer your-token-here" \
+  http://localhost:8001/health
 
-# Cache statistics
-curl http://localhost:8001/cache/stats
+# Cache statistics (requires authentication)
+curl -H "Authorization: Bearer your-token-here" \
+  http://localhost:8001/cache/stats
 
-# Test query
-curl "http://localhost:8001/cache?team=Lakers&sport=Basketball"
+# Test query (requires authentication)
+curl -H "Authorization: Bearer your-token-here" \
+  "http://localhost:8001/cache?team=Lakers&sport=Basketball"
+
+# Public endpoint (no auth required)
+curl http://localhost:8001/
 ```
 
 ### Service Management Commands
@@ -267,10 +388,12 @@ sudo systemctl disable cache-api
 ### Clear Cache
 
 ```bash
-# Via API
-curl -X DELETE http://localhost:8001/cache/clear
+# Via API (requires authentication)
+curl -X DELETE \
+  -H "Authorization: Bearer your-token-here" \
+  http://localhost:8001/cache/clear
 
-# Via Redis CLI
+# Via Redis CLI (direct access, no auth needed)
 redis-cli FLUSHDB
 ```
 
