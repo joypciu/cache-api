@@ -20,16 +20,20 @@ load_dotenv()
 
 # Security configuration
 security = HTTPBearer()
-VALID_API_TOKENS = set(filter(None, [
-    os.getenv('API_TOKEN'),
-    os.getenv('API_TOKEN_1'),
-    os.getenv('API_TOKEN_2'),
-    os.getenv('API_TOKEN_3'),
-]))
+
+# Non-admin key (read-only access to cache endpoints)
+NON_ADMIN_KEY = "12345"
+
+# Admin key (full access to all endpoints)
+ADMIN_KEY = "eternitylabsadmin"
+
+# All valid tokens (admin + non-admin)
+VALID_API_TOKENS = {ADMIN_KEY, NON_ADMIN_KEY}
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
     """
     Verify the API token from the Authorization header.
+    Allows both admin and non-admin tokens.
     
     Raises:
         HTTPException: If token is invalid or missing
@@ -48,6 +52,26 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security))
         raise HTTPException(
             status_code=401,
             detail="Invalid or expired API token"
+        )
+    
+    return token
+
+def verify_admin_token(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
+    """
+    Verify the API token is an admin token.
+    Restricts access to admin-only endpoints.
+    
+    Raises:
+        HTTPException: If token is invalid, missing, or not an admin token
+    
+    Returns:
+        The validated admin token
+    """
+    token = credentials.credentials
+    if token != ADMIN_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required. This endpoint requires an admin API token."
         )
     
     return token
@@ -90,8 +114,8 @@ async def root():
     }
 
 @app.get("/health")
-async def health_check(token: str = Depends(verify_token)):
-    """Health check for monitoring (requires authentication)"""
+async def health_check(token: str = Depends(verify_admin_token)):
+    """Health check for monitoring (requires admin authentication)"""
     stats = get_cache_stats()
     return {
         "status": "healthy",
@@ -99,8 +123,8 @@ async def health_check(token: str = Depends(verify_token)):
     }
 
 @app.get("/cache/stats")
-async def cache_statistics(token: str = Depends(verify_token)):
-    """Get detailed cache statistics (requires authentication)"""
+async def cache_statistics(token: str = Depends(verify_admin_token)):
+    """Get detailed cache statistics (requires admin authentication)"""
     stats = get_cache_stats()
     return JSONResponse(
         status_code=200,
@@ -108,8 +132,8 @@ async def cache_statistics(token: str = Depends(verify_token)):
     )
 
 @app.delete("/cache/clear")
-async def clear_cache(token: str = Depends(verify_token)):
-    """Clear all cache entries (requires authentication)"""
+async def clear_cache(token: str = Depends(verify_admin_token)):
+    """Clear all cache entries (requires admin authentication)"""
     success = clear_all_cache()
     
     if success:
@@ -133,9 +157,9 @@ async def invalidate_specific_cache(
     player: Optional[str] = Query(None),
     sport: Optional[str] = Query(None),
     league: Optional[str] = Query(None),
-    token: str = Depends(verify_token)
+    token: str = Depends(verify_admin_token)
 ):
-    """Invalidate specific cache entry (requires authentication)"""
+    """Invalidate specific cache entry (requires admin authentication)"""
     if not any([market, team, player, league]):
         raise HTTPException(
             status_code=400,
