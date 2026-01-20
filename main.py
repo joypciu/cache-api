@@ -22,7 +22,7 @@ load_dotenv()
 security = HTTPBearer()
 
 # Non-admin key (read-only access to cache endpoints)
-NON_ADMIN_KEY = "12345"
+NON_ADMIN_KEY = "a8f5f167-0e5a-4f3c-9d2e-8b7a3c4e5f6d"
 
 # Admin key (full access to all endpoints)
 ADMIN_KEY = "eternitylabsadmin"
