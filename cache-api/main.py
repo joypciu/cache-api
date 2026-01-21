@@ -837,11 +837,11 @@ async def get_api_request_statistics(
 
 
 if __name__ == "__main__":
-    # Run the server on port 8001
+    # Run the server on port 6002
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8001,
+        port=6002,
         reload=False,
         log_level="info"
     )
