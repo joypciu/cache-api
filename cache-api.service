@@ -11,6 +11,7 @@ Environment="PATH=/home/ubuntu/services/cache-api/venv/bin:/usr/local/sbin:/usr/
 Environment="REDIS_HOST=localhost"
 Environment="REDIS_PORT=6379"
 Environment="CACHE_TTL=3600"
+Environment="PORT=5000"
 ExecStart=/home/ubuntu/services/cache-api/venv/bin/python main.py
 Restart=always
 RestartSec=10

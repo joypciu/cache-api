@@ -403,11 +403,11 @@ async def get_precision_batch_cache(request: PrecisionBatchRequest = Body(...), 
 
 
 if __name__ == "__main__":
-    # Run the server on port 8001
+    # Run the server on port 5000
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8001,
+        port=5000,
         reload=False,
         log_level="info"
     )

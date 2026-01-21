@@ -123,9 +123,9 @@ sudo cp "$SERVICE_FILE" "/etc/systemd/system/$SERVICE_FILE"
 sudo systemctl daemon-reload
 print_success "Systemd service installed"
 
-# Kill any existing process on port 8001
-print_info "Checking for existing process on port 8001..."
-sudo fuser -k 8001/tcp 2>/dev/null || true
+# Kill any existing process on port 5000
+print_info "Checking for existing process on port 5000..."
+sudo fuser -k 5000/tcp 2>/dev/null || true
 
 # Enable and restart service
 print_info "Starting $SERVICE_NAME service..."
@@ -147,7 +147,7 @@ fi
 
 # Verify API is responding
 print_info "Verifying API is responding..."
-if curl -f http://localhost:8001/health &> /dev/null; then
+if curl -f http://localhost:5000/health &> /dev/null; then
     print_success "API is responding on port 8001"
 else
     print_error "API is not responding"
