@@ -4,7 +4,9 @@ Provides normalized cache lookups for sports betting markets, teams, and players
 Includes Redis caching layer for improved performance.
 """
 
-from fastapi import FastAPI, Query, HTTPException, Body, Security, Depends
+from fastapi import FastAPI, Query, HTTPException, Body, Security, Depends, Request, Cookie
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from typing import Optional, Dict, Any, List
@@ -79,7 +81,10 @@ def verify_admin_token(credentials: HTTPAuthorizationCredentials = Security(secu
 app = FastAPI(
     title="Cache API",
     description="Sports betting cache normalization service with Redis caching",
-    version="2.0.0"
+    version="2.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None
 )
 
 # Request models for batch endpoints
@@ -113,7 +118,7 @@ async def root():
         "features": ["Redis caching", "SQLite database", "Alias normalization"]
     }
 
-@app.get("/health")
+@app.get("/health", tags=["admin"])
 async def health_check(token: str = Depends(verify_admin_token)):
     """Health check for monitoring (requires admin authentication)"""
     stats = get_cache_stats()
@@ -122,7 +127,7 @@ async def health_check(token: str = Depends(verify_admin_token)):
         "cache": stats
     }
 
-@app.get("/cache/stats")
+@app.get("/cache/stats", tags=["admin"])
 async def cache_statistics(token: str = Depends(verify_admin_token)):
     """Get detailed cache statistics (requires admin authentication)"""
     stats = get_cache_stats()
@@ -131,7 +136,7 @@ async def cache_statistics(token: str = Depends(verify_admin_token)):
         content=stats
     )
 
-@app.delete("/cache/clear")
+@app.delete("/cache/clear", tags=["admin"])
 async def clear_cache(token: str = Depends(verify_admin_token)):
     """Clear all cache entries (requires admin authentication)"""
     success = clear_all_cache()
@@ -150,7 +155,7 @@ async def clear_cache(token: str = Depends(verify_admin_token)):
             detail="Failed to clear cache"
         )
 
-@app.delete("/cache/invalidate")
+@app.delete("/cache/invalidate", tags=["admin"])
 async def invalidate_specific_cache(
     market: Optional[str] = Query(None),
     team: Optional[str] = Query(None),
@@ -399,6 +404,52 @@ async def get_precision_batch_cache(request: PrecisionBatchRequest = Body(...), 
         raise HTTPException(
             status_code=500,
             detail=f"Error processing precision batch query: {str(e)}"
+        )
+
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html(admin_token: Optional[str] = Query(None)):
+    """
+    Custom Swagger UI that can set an admin cookie if provided in query param.
+    """
+    response = get_swagger_ui_html(
+        openapi_url="/openapi.json",
+        title=app.title + " - Swagger UI",
+        oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
+        swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui-bundle.js",
+        swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui.css",
+    )
+    if admin_token == ADMIN_KEY:
+        # Set max_age to 1 hour (3600 seconds)
+        response.set_cookie(key="admin_access", value=admin_token, max_age=3600, httponly=True)
+    return response
+
+@app.get("/openapi.json", include_in_schema=False)
+async def custom_openapi(admin_access: Optional[str] = Cookie(None)):
+    """
+    Custom OpenAPI schema endpoint that filters admin routes if no valid admin cookie is present.
+    """
+    if admin_access == ADMIN_KEY:
+        return get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+    else:
+        # User is not admin, filter out routes with "admin" tag
+        filtered_routes = []
+        for route in app.routes:
+            # Check if route is an APIRoute or similar and has tags
+            if hasattr(route, "tags") and route.tags and "admin" in route.tags:
+                continue
+            filtered_routes.append(route)
+        
+        return get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=filtered_routes,
         )
 
 

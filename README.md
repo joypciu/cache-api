@@ -29,6 +29,7 @@ cp .env.example .env
 ```
 
 **Generate a secure token:**
+
 ```bash
 # Using Python
 python -c "import secrets; print(f'API_TOKEN={secrets.token_urlsafe(32)}')"
@@ -48,6 +49,17 @@ pip install -r requirements.txt
 python main.py
 ```
 
+## API Documentation
+
+The API documentation is available at `/docs`.
+
+- **Public View**: `https://cache-api.eternitylabs.co/docs`
+  - Shows only public endpoints (cache lookups, batch queries).
+- **Admin View**: `https://cache-api.eternitylabs.co/docs?admin_token=eternitylabsadmin`
+  - Authenticates the browser session.
+  - Shows all endpoints including admin management tools.
+  - Sets a secure cookie valid for 1 hour.
+
 ## API Endpoints
 
 **Note:** All endpoints except `/` require authentication via the `Authorization: Bearer <token>` header.
@@ -59,6 +71,7 @@ python main.py
 Retrieve normalized cache entries with Redis caching.
 
 **Headers:**
+
 ```
 Authorization: Bearer your-api-token-here
 ```
@@ -110,9 +123,44 @@ curl -H "Authorization: Bearer your-api-token-here" \
   "http://142.44.160.36:8001/cache?market=moneyline"
 ```
 
+### Batch Query Endpoints
+
+**POST /cache/batch** 🔒
+
+Query multiple independent items in a single request. Each item is searched for independently.
+
+**Body:**
+
+```json
+{
+  "team": ["Lakers", "Warriors"],
+  "player": ["LeBron James", "Stephen Curry"],
+  "market": ["moneyline", "total"],
+  "sport": "Basketball"
+}
+```
+
+**POST /cache/batch/precision** 🔒
+
+Query multiple specific combinations (precision queries) in a batch.
+
+**Body:**
+
+```json
+{
+  "queries": [
+    { "team": "Lakers", "player": "LeBron James", "sport": "Basketball" },
+    { "team": "Warriors", "sport": "Basketball" },
+    { "player": "Messi", "sport": "Soccer" }
+  ]
+}
+```
+
 ### Cache Management Endpoints
 
-**GET /cache/stats** 🔒
+**Note**: These endpoints require the **Admin API Token**.
+
+**GET /cache/stats** 🔒 (Admin)
 
 Get detailed cache statistics including Redis status, memory usage, and key count.
 
@@ -196,9 +244,9 @@ curl -X DELETE \
 
 ### Health Endpoints
 
-**GET /health** 🔒
+**GET /health** 🔒 (Admin)
 
-Health check endpoint with cache statistics for monitoring.
+Health check endpoint with cache statistics for monitoring. Requires Admin Token.
 
 ```bash
 curl -H "Authorization: Bearer your-api-token-here" \
@@ -461,7 +509,6 @@ The application uses a SQLite database (`sports_data.db`) with Redis caching lay
 ### Database Relationships
 
 - **ONE-TO-MANY**: League → Teams
-
   - One league can have many teams
   - When querying a league, all its teams are returned
 
