@@ -19,7 +19,6 @@ from dotenv import load_dotenv
 from cache_db import get_cache_entry, get_batch_cache_entries, get_precision_batch_cache_entries
 from redis_cache import get_cache_stats, clear_all_cache, invalidate_cache
 from uuid_tracking import track_uuid_login, get_uuid_login_logs
-from request_tracking import log_api_request, get_request_logs, get_request_statistics, init_request_tracking_db
 
 # Load environment variables
 load_dotenv()
@@ -37,7 +36,7 @@ ADMIN_KEY = "eternitylabsadmin"
 VALID_API_TOKENS = {ADMIN_KEY, NON_ADMIN_KEY}
 
 # Debug: Print loaded tokens
-print(f"🔑 Loaded API Tokens:")
+print("Loaded API Tokens:")
 print(f"   Admin Key: {ADMIN_KEY}")
 print(f"   Non-Admin Key: {NON_ADMIN_KEY}")
 print(f"   Valid Tokens Set: {VALID_API_TOKENS}")
@@ -62,18 +61,18 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security))
     token = credentials.credentials
     
     # Debug: Log received token
-    print(f"🔍 Received token: '{token}' (length: {len(token)})")
-    print(f"🔍 Token in VALID_API_TOKENS: {token in VALID_API_TOKENS}")
-    print(f"🔍 Valid tokens: {VALID_API_TOKENS}")
+    print(f"DEBUG: Received token: '{token}' (length: {len(token)})")
+    print(f"DEBUG: Token in VALID_API_TOKENS: {token in VALID_API_TOKENS}")
+    print(f"DEBUG: Valid tokens: {VALID_API_TOKENS}")
     
     if token not in VALID_API_TOKENS:
-        print(f"❌ Token '{token}' not found in valid tokens")
+        print(f"ERROR: Token '{token}' not found in valid tokens")
         raise HTTPException(
             status_code=401,
             detail="Invalid or expired API token"
         )
     
-    print(f"✅ Token '{token}' validated successfully")
+    print(f"SUCCESS: Token '{token}' validated successfully")
     return token
 
 def verify_admin_token(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
@@ -112,118 +111,7 @@ app.add_middleware(
 )
 
 
-# Request-Response Tracking Middleware
-@app.middleware("http")
-async def track_requests(request: Request, call_next):
-    """
-    Middleware to track all incoming requests and outgoing responses.
-    Logs method, path, headers, body, response status, and response time.
-    """
-    # Start timer
-    start_time = time.time()
-    
-    # Get client IP with proxy support
-    client_ip = request.client.host if request.client else "unknown"
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        client_ip = real_ip.strip()
-    else:
-        forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
-            client_ip = forwarded_for.split(",")[0].strip()
-    
-    # Get request details
-    method = request.method
-    path = request.url.path
-    query_params = str(request.query_params) if request.query_params else None
-    user_agent = request.headers.get("User-Agent", "unknown")
-    
-    # Capture request headers (excluding sensitive ones)
-    headers_dict = dict(request.headers)
-    # Remove authorization header from logs for security
-    if "authorization" in headers_dict:
-        headers_dict["authorization"] = "***REDACTED***"
-    
-    # Capture request body (for POST, PUT, PATCH)
-    request_body = None
-    if method in ["POST", "PUT", "PATCH"]:
-        try:
-            body_bytes = await request.body()
-            if body_bytes:
-                request_body = body_bytes.decode('utf-8')
-                # Truncate large bodies
-                if len(request_body) > 10000:
-                    request_body = request_body[:10000] + "... [TRUNCATED]"
-        except Exception as e:
-            request_body = f"[Error reading body: {str(e)}]"
-    
-    # Process the request
-    response = None
-    error_message = None
-    response_body = None
-    response_status = None
-    
-    try:
-        response = await call_next(request)
-        response_status = response.status_code
-        
-        # Capture response body (for logging)
-        # Note: This is a simplified version - for production you might want to stream
-        response_body_bytes = b""
-        async for chunk in response.body_iterator:
-            response_body_bytes += chunk
-        
-        if response_body_bytes:
-            try:
-                response_body = response_body_bytes.decode('utf-8')
-                # Truncate large responses
-                if len(response_body) > 10000:
-                    response_body = response_body[:10000] + "... [TRUNCATED]"
-            except:
-                response_body = "[Binary response]"
-        
-        # Recreate response with same content
-        from starlette.responses import Response
-        response = Response(
-            content=response_body_bytes,
-            status_code=response.status_code,
-            headers=dict(response.headers),
-            media_type=response.media_type
-        )
-        
-    except Exception as e:
-        error_message = str(e)
-        response_status = 500
-        raise
-    
-    finally:
-        # Calculate response time
-        response_time_ms = (time.time() - start_time) * 1000
-        
-        # Log to database (async, non-blocking)
-        try:
-            log_api_request(
-                method=method,
-                path=path,
-                query_params=query_params,
-                client_ip=client_ip,
-                user_agent=user_agent,
-                headers=headers_dict,
-                request_body=request_body,
-                response_status=response_status,
-                response_body=response_body,
-                response_time_ms=round(response_time_ms, 2),
-                error_message=error_message
-            )
-        except Exception as log_error:
-            # Don't let logging errors break the request
-            print(f"Failed to log request: {log_error}")
-    
-    return response
 
-
-# Initialize request tracking database
-init_request_tracking_db()
 
 
 # Mount static files (CSS, JS) for the dashboard
@@ -239,7 +127,7 @@ if os.path.exists(dashboard_path):
     if os.path.exists(js_path):
         app.mount("/js", StaticFiles(directory=js_path), name="js")
     
-    print(f"📁 Dashboard static files mounted from: {dashboard_path}")
+    print(f"Dashboard static files mounted from: {dashboard_path}")
 
 
 # Request models for batch endpoints
@@ -700,139 +588,6 @@ async def get_uuid_logs(
     return JSONResponse(
         status_code=200,
         content=logs
-    )
-
-
-@app.get("/admin/request-logs")
-async def get_api_request_logs(
-    path: Optional[str] = Query(None, description="Filter by request path (partial match)"),
-    method: Optional[str] = Query(None, description="Filter by HTTP method (GET, POST, etc.)"),
-    client_ip: Optional[str] = Query(None, description="Filter by client IP address"),
-    status_code: Optional[int] = Query(None, description="Filter by response status code"),
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
-    offset: int = Query(0, ge=0, description="Number of records to skip for pagination"),
-    token: str = Depends(verify_admin_token)
-):
-    """
-    Admin endpoint to retrieve API request-response logs.
-    
-    **Admin authentication required.**
-    
-    This endpoint provides comprehensive logging of all API requests and responses:
-    - Request method, path, query parameters
-    - Client IP address and user agent
-    - Request headers and body
-    - Response status code and body
-    - Response time in milliseconds
-    - Error messages (if any)
-    
-    Useful for:
-    - Monitoring API usage
-    - Debugging issues
-    - Security auditing
-    - Performance analysis
-    
-    Query Parameters:
-    - path: Filter logs by request path (supports partial matching)
-    - method: Filter by HTTP method (GET, POST, PUT, DELETE, etc.)
-    - client_ip: Filter by specific client IP address
-    - status_code: Filter by HTTP status code (200, 404, 500, etc.)
-    - limit: Maximum records to return (1-1000, default: 100)
-    - offset: Skip N records for pagination (default: 0)
-    
-    Example:
-    ```
-    GET /admin/request-logs?method=POST&status_code=200&limit=50
-    ```
-    
-    Response:
-    ```json
-    {
-        "status": "success",
-        "total_records": 1523,
-        "returned_records": 50,
-        "limit": 50,
-        "offset": 0,
-        "logs": [
-            {
-                "id": 1523,
-                "timestamp": "2026-01-21 05:30:15",
-                "method": "POST",
-                "path": "/auth/uuid",
-                "query_params": null,
-                "client_ip": "103.113.172.252",
-                "user_agent": "PostmanRuntime/7.26.8",
-                "headers": {...},
-                "request_body": "{\"uuid\":\"...\"}",
-                "response_status": 200,
-                "response_body": "{\"authenticated\":true,...}",
-                "response_time_ms": 45.23,
-                "error_message": null
-            }
-        ]
-    }
-    ```
-    """
-    logs = get_request_logs(
-        path=path,
-        method=method,
-        client_ip=client_ip,
-        status_code=status_code,
-        limit=limit,
-        offset=offset
-    )
-    
-    return JSONResponse(
-        status_code=200,
-        content=logs
-    )
-
-
-@app.get("/admin/request-stats")
-async def get_api_request_statistics(
-    token: str = Depends(verify_admin_token)
-):
-    """
-    Admin endpoint to get statistics about API requests.
-    
-    **Admin authentication required.**
-    
-    Provides aggregated statistics including:
-    - Total number of requests
-    - Requests grouped by HTTP method
-    - Requests grouped by status code
-    - Top 10 most accessed endpoints
-    - Average response time
-    - Total error count
-    
-    Example Response:
-    ```json
-    {
-        "status": "success",
-        "total_requests": 1523,
-        "by_method": [
-            {"method": "GET", "count": 892},
-            {"method": "POST", "count": 631}
-        ],
-        "by_status_code": [
-            {"status": 200, "count": 1450},
-            {"status": 404, "count": 50},
-            {"status": 500, "count": 23}
-        ],
-        "top_endpoints": [
-            {"path": "/cache", "count": 456},
-            {"path": "/auth/uuid", "count": 324}
-        ],
-        "average_response_time_ms": 42.56,
-        "error_count": 23
-    }
-    ```
-    """
-    stats = get_request_statistics()
-    
-    return JSONResponse(
-        status_code=200,
-        content=stats
     )
 
 

@@ -434,6 +434,7 @@ def get_cache_entry(
             # Combine and deduplicate league IDs
             league_ids = list(set(league_ids_from_aliases + league_ids_from_main))
             
+            
             if not league_ids:
                 return None
             
