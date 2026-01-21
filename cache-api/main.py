@@ -497,13 +497,24 @@ async def uuid_login(request: Request, login_data: UUIDLoginRequest = Body(...))
         }
     }
     """
-    # Get client IP address
+    # Get client IP address with improved proxy support
     client_ip = request.client.host if request.client else "unknown"
     
-    # Check for forwarded IP (when behind proxy/load balancer)
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        client_ip = forwarded_for.split(",")[0].strip()
+    # Check multiple headers for real IP (when behind proxy/load balancer/CDN)
+    # Priority: X-Real-IP > X-Forwarded-For > CF-Connecting-IP > client.host
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        client_ip = real_ip.strip()
+    else:
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            # X-Forwarded-For can contain multiple IPs, get the first one (original client)
+            client_ip = forwarded_for.split(",")[0].strip()
+        else:
+            # Check for Cloudflare's connecting IP header
+            cf_ip = request.headers.get("CF-Connecting-IP")
+            if cf_ip:
+                client_ip = cf_ip.strip()
     
     # Get user agent
     user_agent = request.headers.get("User-Agent", "unknown")
