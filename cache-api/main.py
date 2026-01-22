@@ -19,6 +19,10 @@ from dotenv import load_dotenv
 from cache_db import get_cache_entry, get_batch_cache_entries, get_precision_batch_cache_entries
 from redis_cache import get_cache_stats, clear_all_cache, invalidate_cache
 from uuid_tracking import track_uuid_login, get_uuid_login_logs
+from request_tracking import (
+    get_or_create_session, track_request, get_request_logs,
+    get_session_summary, get_session_details, clear_old_sessions
+)
 
 # Load environment variables
 load_dotenv()
@@ -44,13 +48,16 @@ print(f"   Valid Tokens Set: {VALID_API_TOKENS}")
 def verify_token(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
     """
     Verify the API token from the Authorization header.
-    Allows both admin and non-admin tokens.
+    Allows both admin tokens, non-admin tokens, and UUID-based authentication.
+    
+    For non-admin users: Use UUID format like "uuid:your-uuid-here"
+    For admin users: Use admin bearer token
     
     Raises:
         HTTPException: If token is invalid or missing
     
     Returns:
-        The validated token
+        The validated token or UUID
     """
     if not VALID_API_TOKENS:
         raise HTTPException(
@@ -62,6 +69,20 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security))
     
     # Debug: Log received token
     print(f"DEBUG: Received token: '{token}' (length: {len(token)})")
+    
+    # Check if it's a UUID-based authentication (for non-admin users)
+    if token.startswith("uuid:"):
+        uuid_value = token[5:]  # Remove "uuid:" prefix
+        if uuid_value and len(uuid_value) > 0:
+            print(f"SUCCESS: UUID authentication validated: {uuid_value}")
+            return token  # Return the full "uuid:xxx" format
+        else:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid UUID format. Use 'uuid:your-uuid-here'"
+            )
+    
+    # Check if it's a standard bearer token
     print(f"DEBUG: Token in VALID_API_TOKENS: {token in VALID_API_TOKENS}")
     print(f"DEBUG: Valid tokens: {VALID_API_TOKENS}")
     
@@ -69,7 +90,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security))
         print(f"ERROR: Token '{token}' not found in valid tokens")
         raise HTTPException(
             status_code=401,
-            detail="Invalid or expired API token"
+            detail="Invalid or expired API token. For non-admin access, use 'uuid:your-uuid-here' format."
         )
     
     print(f"SUCCESS: Token '{token}' validated successfully")
@@ -109,6 +130,90 @@ app.add_middleware(
     allow_methods=["*"],  # Allow all methods (GET, POST, DELETE, etc.)
     allow_headers=["*"],  # Allow all headers
 )
+
+# Request tracking middleware
+@app.middleware("http")
+async def track_requests_middleware(request: Request, call_next):
+    """
+    Middleware to track all non-admin API requests.
+    Creates sessions and logs request details for non-admin users.
+    """
+    # Record start time
+    start_time = time.time()
+    
+    # Get client information
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Check for real IP behind proxy
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        client_ip = real_ip.strip()
+    else:
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            client_ip = forwarded_for.split(",")[0].strip()
+    
+    user_agent = request.headers.get("User-Agent", "unknown")
+    
+    # Get token from authorization header if present
+    token = None
+    session_id = None
+    user_uuid = None
+    auth_header = request.headers.get("Authorization", "")
+    
+    if auth_header.startswith("Bearer "):
+        token = auth_header.replace("Bearer ", "")
+        
+        # Check if it's UUID-based authentication
+        if token.startswith("uuid:"):
+            user_uuid = token[5:]  # Extract UUID
+            # Create or get session for UUID user
+            session_id = get_or_create_session(
+                token=token,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                user_identifier=user_uuid
+            )
+        # Create or get session for standard token
+        elif token and token in VALID_API_TOKENS:
+            session_id = get_or_create_session(
+                token=token,
+                ip_address=client_ip,
+                user_agent=user_agent
+            )
+    
+    # Process the request
+    response = await call_next(request)
+    
+    # Calculate response time
+    response_time_ms = (time.time() - start_time) * 1000
+    
+    # Track request (only for non-admin users)
+    # Track UUID-authenticated users and non-admin token users, but not admin
+    is_admin = (token == ADMIN_KEY)
+    is_trackable = token and session_id and not is_admin
+    
+    if is_trackable:
+        # Get query params
+        query_params = dict(request.query_params)
+        
+        # Get body data for POST requests (if available)
+        body_data = None
+        
+        track_request(
+            session_id=session_id,
+            method=request.method,
+            path=str(request.url.path),
+            query_params=query_params,
+            token=token,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            response_status=response.status_code,
+            response_time_ms=response_time_ms,
+            body_data=body_data
+        )
+    
+    return response
 
 
 
@@ -588,6 +693,156 @@ async def get_uuid_logs(
     return JSONResponse(
         status_code=200,
         content=logs
+    )
+
+
+@app.get("/admin/request-logs")
+async def get_request_tracking_logs(
+    session_id: Optional[str] = Query(None, description="Filter by session ID"),
+    path_filter: Optional[str] = Query(None, description="Filter by request path"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
+    offset: int = Query(0, ge=0, description="Number of records to skip"),
+    token: str = Depends(verify_admin_token)
+):
+    """
+    Admin-only endpoint to retrieve non-admin user request tracking logs.
+    
+    Query parameters:
+    - session_id: Optional session ID to filter logs
+    - path_filter: Optional path filter (partial match)
+    - limit: Maximum number of records (1-1000, default 100)
+    - offset: Number of records to skip (for pagination)
+    
+    Returns:
+    {
+        "total": 500,
+        "limit": 100,
+        "offset": 0,
+        "count": 100,
+        "requests": [
+            {
+                "request_id": "abc-123",
+                "session_id": "xyz-789",
+                "timestamp": "2026-01-22T10:30:15",
+                "method": "GET",
+                "path": "/cache",
+                "query_params": {"team": "Lakers"},
+                "ip_address": "203.0.113.42",
+                "response_status": 200,
+                "response_time_ms": 45.2
+            }
+        ]
+    }
+    """
+    logs = get_request_logs(
+        session_id=session_id,
+        limit=limit,
+        offset=offset,
+        path_filter=path_filter
+    )
+    
+    return JSONResponse(
+        status_code=200,
+        content=logs
+    )
+
+
+@app.get("/admin/sessions")
+async def get_sessions_summary(token: str = Depends(verify_admin_token)):
+    """
+    Admin-only endpoint to get summary of all user sessions.
+    
+    Returns:
+    {
+        "total_sessions": 25,
+        "admin_sessions": 2,
+        "non_admin_sessions": 23,
+        "total_tracked_requests": 1500,
+        "sessions": [
+            {
+                "session_id": "xyz-789",
+                "user_identifier": "user_1",
+                "ip_address": "203.0.113.42",
+                "token_type": "non-admin",
+                "created_at": "2026-01-22T08:00:00",
+                "last_activity": "2026-01-22T10:30:15",
+                "request_count": 45
+            }
+        ]
+    }
+    """
+    summary = get_session_summary()
+    
+    return JSONResponse(
+        status_code=200,
+        content=summary
+    )
+
+
+@app.get("/admin/sessions/{session_id}")
+async def get_session_detail(
+    session_id: str,
+    token: str = Depends(verify_admin_token)
+):
+    """
+    Admin-only endpoint to get detailed information about a specific session.
+    
+    Returns:
+    {
+        "session": {
+            "session_id": "xyz-789",
+            "user_identifier": "user_1",
+            "ip_address": "203.0.113.42",
+            "token_type": "non-admin",
+            "created_at": "2026-01-22T08:00:00",
+            "last_activity": "2026-01-22T10:30:15",
+            "request_count": 45
+        },
+        "request_count": 45,
+        "recent_requests": [
+            {...}
+        ]
+    }
+    """
+    details = get_session_details(session_id)
+    
+    if not details:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session {session_id} not found"
+        )
+    
+    return JSONResponse(
+        status_code=200,
+        content=details
+    )
+
+
+@app.post("/admin/sessions/cleanup")
+async def cleanup_old_sessions(
+    days_old: int = Query(7, ge=1, le=365, description="Clear sessions older than this many days"),
+    token: str = Depends(verify_admin_token)
+):
+    """
+    Admin-only endpoint to clear old inactive sessions.
+    
+    Query parameters:
+    - days_old: Number of days after which to clear sessions (default: 7)
+    
+    Returns:
+    {
+        "status": "success",
+        "message": "Old sessions cleared"
+    }
+    """
+    clear_old_sessions(days_old=days_old)
+    
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "success",
+            "message": f"Sessions older than {days_old} days have been cleared"
+        }
     )
 
 
