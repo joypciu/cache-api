@@ -13,6 +13,8 @@ from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 import uvicorn
 import os
+import time
+from collections import defaultdict
 from dotenv import load_dotenv
 from cache_db import get_cache_entry, get_batch_cache_entries, get_precision_batch_cache_entries
 from redis_cache import get_cache_stats, clear_all_cache, invalidate_cache
@@ -23,14 +25,63 @@ load_dotenv()
 # Security configuration
 security = HTTPBearer()
 
-# Non-admin key (read-only access to cache endpoints)
-NON_ADMIN_KEY = "a8f5f167-0e5a-4f3c-9d2e-8b7a3c4e5f6d"
-
+# Load API keys from environment variables (NEVER hardcode in production!)
 # Admin key (full access to all endpoints)
-ADMIN_KEY = "eternitylabsadmin"
+ADMIN_KEY = os.getenv('ADMIN_API_TOKEN', None)
+
+# Non-admin key (read-only access to cache endpoints)
+NON_ADMIN_KEY = os.getenv('API_TOKEN', None)
 
 # All valid tokens (admin + non-admin)
-VALID_API_TOKENS = {ADMIN_KEY, NON_ADMIN_KEY}
+VALID_API_TOKENS = {token for token in [ADMIN_KEY, NON_ADMIN_KEY] if token}
+
+# Rate limiting configuration
+RATE_LIMIT_PER_MINUTE = int(os.getenv('RATE_LIMIT_PER_MINUTE', 60))
+rate_limit_storage = defaultdict(list)
+
+def check_rate_limit(client_ip: str) -> bool:
+    """
+    Check if the client IP has exceeded the rate limit.
+    Simple in-memory rate limiting - use Redis for production multi-server setup.
+    
+    Args:
+        client_ip: The client's IP address
+    
+    Returns:
+        True if rate limit is not exceeded, False otherwise
+    """
+    now = time.time()
+    minute_ago = now - 60
+    
+    # Clean old entries
+    rate_limit_storage[client_ip] = [
+        timestamp for timestamp in rate_limit_storage[client_ip]
+        if timestamp > minute_ago
+    ]
+    
+    # Check if limit exceeded
+    if len(rate_limit_storage[client_ip]) >= RATE_LIMIT_PER_MINUTE:
+        return False
+    
+    # Add current request
+    rate_limit_storage[client_ip].append(now)
+    return True
+
+async def verify_rate_limit(request: Request):
+    """
+    Middleware to check rate limiting before processing request.
+    
+    Raises:
+        HTTPException: If rate limit is exceeded
+    """
+    client_ip = request.client.host
+    
+    if not check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded. Maximum {RATE_LIMIT_PER_MINUTE} requests per minute allowed."
+        )
+
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
     """
@@ -144,12 +195,14 @@ async def clear_cache(token: str = Depends(verify_admin_token)):
     if success:
         return JSONResponse(
             status_code=200,
-            content={
-                "status": "success",
-                "message": "All cache entries cleared"
-            }
-        )
-    else:
+    request: Request,
+    market: Optional[str] = Query(None, description="Market type (e.g., 'moneyline', 'spread', 'total')"),
+    team: Optional[str] = Query(None, description="Team name to look up"),
+    player: Optional[str] = Query(None, description="Player name to look up"),
+    sport: Optional[str] = Query(None, description="Sport name (required when searching by team or league)"),
+    league: Optional[str] = Query(None, description="League name to look up"),
+    token: str = Depends(verify_token),
+    _: None = Depends(verify_rate_limit
         raise HTTPException(
             status_code=500,
             detail="Failed to clear cache"
@@ -280,6 +333,11 @@ async def get_cache(
             detail=f"Error retrieving cache entry: {str(e)}"
         )
 
+    request: Request,
+    request_body: BatchQueryRequest = Body(...),
+    token: str = Depends(verify_token),
+    _: None = Depends(verify_rate_limit)
+
 @app.post("/cache/batch")
 async def get_batch_cache(request: BatchQueryRequest = Body(...), token: str = Depends(verify_token)) -> JSONResponse:
     """
@@ -314,11 +372,11 @@ async def get_batch_cache(request: BatchQueryRequest = Body(...), token: str = D
             "total": {...}
         },
         "league": {
-            "NBA": {...},
-            "EuroLeague": null
-        }
-    }
-    """
+            "NBA": {...},_body.team,
+            players=request_body.player,
+            markets=request_body.market,
+            sport=request_body.sport,
+            leagues=request_body
     try:
         result = get_batch_cache_entries(
             teams=request.team,
@@ -334,6 +392,11 @@ async def get_batch_cache(request: BatchQueryRequest = Body(...), token: str = D
         )
         
     except Exception as e:
+    request: Request,
+    request_body: PrecisionBatchRequest = Body(...),
+    token: str = Depends(verify_token),
+    _: None = Depends(verify_rate_limit)
+
         raise HTTPException(
             status_code=500,
             detail=f"Error processing batch query: {str(e)}"
@@ -383,7 +446,7 @@ async def get_precision_batch_cache(request: PrecisionBatchRequest = Body(...), 
             },
             {
                 "query": {"league": "Premier League", "sport": "Soccer"},
-                "found": false,
+                "found": false,_body
                 "data": null
             }
         ],
@@ -419,9 +482,9 @@ async def custom_swagger_ui_html(admin_token: Optional[str] = Query(None)):
         swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui-bundle.js",
         swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui.css",
     )
-    if admin_token == ADMIN_KEY:
+    if admin_token and admin_token == ADMIN_KEY:
         # Set max_age to 1 hour (3600 seconds)
-        response.set_cookie(key="admin_access", value=admin_token, max_age=3600, httponly=True)
+        response.set_cookie(key="admin_access", value=admin_token, max_age=3600, httponly=True, secure=True, samesite="strict")
     return response
 
 @app.get("/openapi.json", include_in_schema=False)
@@ -429,7 +492,7 @@ async def custom_openapi(admin_access: Optional[str] = Cookie(None)):
     """
     Custom OpenAPI schema endpoint that filters admin routes if no valid admin cookie is present.
     """
-    if admin_access == ADMIN_KEY:
+    if admin_access and admin_access == ADMIN_KEY:
         return get_openapi(
             title=app.title,
             version=app.version,

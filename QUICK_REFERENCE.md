@@ -16,7 +16,7 @@ https://github.com/joypciu/cache-api/pull/12
 
 ```bash
 # SSH to VPS
-ssh ubuntu@142.44.160.36
+ssh ubuntu@YOUR_VPS_IP
 
 # Navigate to service directory
 cd /home/ubuntu/services/cache-api
@@ -34,13 +34,13 @@ chmod +x deploy.sh
 
 ```bash
 # Health check
-curl http://142.44.160.36:8001/health
+curl http://YOUR_VPS_IP:8001/health
 
 # Cache stats
-curl http://142.44.160.36:8001/cache/stats
+curl http://YOUR_VPS_IP:8001/cache/stats
 
 # Test query
-curl "http://142.44.160.36:8001/cache?team=Lakers&sport=Basketball"
+curl "http://YOUR_VPS_IP:8001/cache?team=Lakers&sport=Basketball"
 ```
 
 ## Service Management

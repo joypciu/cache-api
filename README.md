@@ -55,7 +55,7 @@ The API documentation is available at `/docs`.
 
 - **Public View**: `https://cache-api.eternitylabs.co/docs`
   - Shows only public endpoints (cache lookups, batch queries).
-- **Admin View**: `https://cache-api.eternitylabs.co/docs?admin_token=eternitylabsadmin`
+- **Admin View**: `https://cache-api.eternitylabs.co/docs?admin_token=YOUR_ADMIN_TOKEN`
   - Authenticates the browser session.
   - Shows all endpoints including admin management tools.
   - Sets a secure cookie valid for 1 hour.
@@ -104,23 +104,23 @@ Authorization: Bearer your-api-token-here
 ```bash
 # Look up a team (sport is required)
 curl -H "Authorization: Bearer your-api-token-here" \
-  "http://142.44.160.36:8001/cache?team=Lakers&sport=Basketball"
+  "http://YOUR_VPS_IP:8001/cache?team=Lakers&sport=Basketball"
 
 # Look up a league with all its teams
 curl -H "Authorization: Bearer your-api-token-here" \
-  "http://142.44.160.36:8001/cache?league=Premier%20League&sport=Soccer"
+  "http://YOUR_VPS_IP:8001/cache?league=Premier%20League&sport=Soccer"
 
 # Look up a player
 curl -H "Authorization: Bearer your-api-token-here" \
-  "http://142.44.160.36:8001/cache?player=LeBron%20James"
+  "http://YOUR_VPS_IP:8001/cache?player=LeBron%20James"
 
 # Look up a specific player on a specific team (most precise)
 curl -H "Authorization: Bearer your-api-token-here" \
-  "http://142.44.160.36:8001/cache?player=Kylian%20Mbappé&team=Real%20Madrid%20CF"
+  "http://YOUR_VPS_IP:8001/cache?player=Kylian%20Mbappé&team=Real%20Madrid%20CF"
 
 # Look up a market
 curl -H "Authorization: Bearer your-api-token-here" \
-  "http://142.44.160.36:8001/cache?market=moneyline"
+  "http://YOUR_VPS_IP:8001/cache?market=moneyline"
 ```
 
 ### Batch Query Endpoints
@@ -166,7 +166,7 @@ Get detailed cache statistics including Redis status, memory usage, and key coun
 
 ```bash
 curl -H "Authorization: Bearer your-api-token-here" \
-  http://142.44.160.36:8001/cache/stats
+  http://YOUR_VPS_IP:8001/cache/stats
 ```
 
 **DELETE /cache/clear** 🔒
@@ -176,7 +176,7 @@ Clear all cache entries from Redis.
 ```bash
 curl -X DELETE \
   -H "Authorization: Bearer your-api-token-here" \
-  http://142.44.160.36:8001/cache/clear
+  http://YOUR_VPS_IP:8001/cache/clear
 ```
 
 **DELETE /cache/invalidate** 🔒
@@ -187,12 +187,12 @@ Invalidate specific cache entry.
 # Invalidate specific team cache
 curl -X DELETE \
   -H "Authorization: Bearer your-api-token-here" \
-  "http://142.44.160.36:8001/cache/invalidate?team=Lakers&sport=Basketball"
+  "http://YOUR_VPS_IP:8001/cache/invalidate?team=Lakers&sport=Basketball"
 
 # Invalidate specific player cache
 curl -X DELETE \
   -H "Authorization: Bearer your-api-token-here" \
-  "http://142.44.160.36:8001/cache/invalidate?player=LeBron%20James"
+  "http://YOUR_VPS_IP:8001/cache/invalidate?player=LeBron%20James"
 ```
 
 **Response Format:**
@@ -250,7 +250,7 @@ Health check endpoint with cache statistics for monitoring. Requires Admin Token
 
 ```bash
 curl -H "Authorization: Bearer your-api-token-here" \
-  http://142.44.160.36:8001/health
+  http://YOUR_VPS_IP:8001/health
 ```
 
 **GET /** ✅ Public
@@ -258,7 +258,7 @@ curl -H "Authorization: Bearer your-api-token-here" \
 Root endpoint showing service status and features (no authentication required).
 
 ```bash
-curl http://142.44.160.36:8001/
+curl http://YOUR_VPS_IP:8001/
 ```
 
 ## Local Development
@@ -377,7 +377,7 @@ The repository includes a GitHub Actions workflow that automatically deploys to 
 
 Add these secrets to your GitHub repository (Settings → Secrets and variables → Actions):
 
-- `VPS_HOST`: Your VPS IP address (e.g., `142.44.160.36`)
+- `VPS_HOST`: Your VPS IP address (e.g., `123.45.67.89`)
 - `VPS_USERNAME`: SSH username (usually `ubuntu`)
 - `VPS_SSH_KEY`: Your private SSH key content
 - `VPS_PORT`: SSH port (usually `22`)
@@ -422,7 +422,7 @@ This script will:
 1. SSH into your VPS:
 
 ```bash
-ssh ubuntu@142.44.160.36
+ssh ubuntu@YOUR_VPS_IP
 ```
 
 2. Create service directory:

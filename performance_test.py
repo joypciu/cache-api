@@ -7,7 +7,7 @@ import time
 import json
 from statistics import mean, median
 
-VPS_URL = "http://142.44.160.36:8001"
+VPS_URL = "http://YOUR_VPS_IP:8001"
 
 def time_request(func):
     """Decorator to time requests"""

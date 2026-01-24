@@ -244,7 +244,7 @@ Go to your GitHub repository \u2192 Settings \u2192 Secrets and variables \u2192
 
 Add the following secrets:
 
-- `VPS_HOST`: Your VPS IP address (e.g., `142.44.160.36`)
+- `VPS_HOST`: Your VPS IP address (e.g., `123.45.67.89`)
 - `VPS_USERNAME`: SSH username (usually `ubuntu`)
 - `VPS_SSH_KEY`: Your private SSH key
 - `VPS_PORT`: SSH port (usually `22`)

@@ -13,9 +13,9 @@ This guide covers deploying the Redis sync service to an Ubuntu VPS.
 
 ### 1. Connect to VPS
 ```bash
-ssh root@142.44.160.36
+ssh root@YOUR_VPS_IP
 # or
-ssh your-username@142.44.160.36
+ssh your-username@YOUR_VPS_IP
 ```
 
 ### 2. Clone Repository
