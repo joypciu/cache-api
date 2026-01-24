@@ -82,7 +82,6 @@ async def verify_rate_limit(request: Request):
             detail=f"Rate limit exceeded. Maximum {RATE_LIMIT_PER_MINUTE} requests per minute allowed."
         )
 
-
 def verify_token(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
     """
     Verify the API token from the Authorization header.
@@ -195,14 +194,12 @@ async def clear_cache(token: str = Depends(verify_admin_token)):
     if success:
         return JSONResponse(
             status_code=200,
-    request: Request,
-    market: Optional[str] = Query(None, description="Market type (e.g., 'moneyline', 'spread', 'total')"),
-    team: Optional[str] = Query(None, description="Team name to look up"),
-    player: Optional[str] = Query(None, description="Player name to look up"),
-    sport: Optional[str] = Query(None, description="Sport name (required when searching by team or league)"),
-    league: Optional[str] = Query(None, description="League name to look up"),
-    token: str = Depends(verify_token),
-    _: None = Depends(verify_rate_limit
+            content={
+                "status": "success",
+                "message": "All cache entries cleared"
+            }
+        )
+    else:
         raise HTTPException(
             status_code=500,
             detail="Failed to clear cache"
@@ -245,12 +242,14 @@ async def invalidate_specific_cache(
 
 @app.get("/cache")
 async def get_cache(
+    request: Request,
     market: Optional[str] = Query(None, description="Market type (e.g., 'moneyline', 'spread', 'total')"),
     team: Optional[str] = Query(None, description="Team name to look up"),
     player: Optional[str] = Query(None, description="Player name to look up"),
     sport: Optional[str] = Query(None, description="Sport name (required when searching by team or league)"),
     league: Optional[str] = Query(None, description="League name to look up"),
-    token: str = Depends(verify_token)
+    token: str = Depends(verify_token),
+    _: None = Depends(verify_rate_limit)
 ) -> JSONResponse:
     """
     Get normalized cache entry for market, team, player, or league (requires authentication).
@@ -333,13 +332,13 @@ async def get_cache(
             detail=f"Error retrieving cache entry: {str(e)}"
         )
 
+@app.post("/cache/batch")
+async def get_batch_cache(
     request: Request,
     request_body: BatchQueryRequest = Body(...),
     token: str = Depends(verify_token),
     _: None = Depends(verify_rate_limit)
-
-@app.post("/cache/batch")
-async def get_batch_cache(request: BatchQueryRequest = Body(...), token: str = Depends(verify_token)) -> JSONResponse:
+) -> JSONResponse:
     """
     Batch cache query endpoint - independent searches for multiple items per category (requires authentication).
     
@@ -372,18 +371,18 @@ async def get_batch_cache(request: BatchQueryRequest = Body(...), token: str = D
             "total": {...}
         },
         "league": {
-            "NBA": {...},_body.team,
+            "NBA": {...},
+            "EuroLeague": null
+        }
+    }
+    """
+    try:
+        result = get_batch_cache_entries(
+            teams=request_body.team,
             players=request_body.player,
             markets=request_body.market,
             sport=request_body.sport,
-            leagues=request_body
-    try:
-        result = get_batch_cache_entries(
-            teams=request.team,
-            players=request.player,
-            markets=request.market,
-            sport=request.sport,
-            leagues=request.league
+            leagues=request_body.league
         )
         
         return JSONResponse(
@@ -392,18 +391,18 @@ async def get_batch_cache(request: BatchQueryRequest = Body(...), token: str = D
         )
         
     except Exception as e:
-    request: Request,
-    request_body: PrecisionBatchRequest = Body(...),
-    token: str = Depends(verify_token),
-    _: None = Depends(verify_rate_limit)
-
         raise HTTPException(
             status_code=500,
             detail=f"Error processing batch query: {str(e)}"
         )
 
 @app.post("/cache/batch/precision")
-async def get_precision_batch_cache(request: PrecisionBatchRequest = Body(...), token: str = Depends(verify_token)) -> JSONResponse:
+async def get_precision_batch_cache(
+    req: Request,
+    request_body: PrecisionBatchRequest = Body(...),
+    token: str = Depends(verify_token),
+    _: None = Depends(verify_rate_limit)
+) -> JSONResponse:
     """
     Precision batch cache query endpoint - combined parameter searches in batch (requires authentication).
     
@@ -446,7 +445,7 @@ async def get_precision_batch_cache(request: PrecisionBatchRequest = Body(...), 
             },
             {
                 "query": {"league": "Premier League", "sport": "Soccer"},
-                "found": false,_body
+                "found": false,
                 "data": null
             }
         ],
@@ -456,7 +455,7 @@ async def get_precision_batch_cache(request: PrecisionBatchRequest = Body(...), 
     }
     """
     try:
-        result = get_precision_batch_cache_entries(request.queries)
+        result = get_precision_batch_cache_entries(request_body.queries)
         
         return JSONResponse(
             status_code=200,
