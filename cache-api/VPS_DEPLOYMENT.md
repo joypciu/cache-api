@@ -13,9 +13,9 @@ This guide covers deploying the Redis sync service to an Ubuntu VPS.
 
 ### 1. Connect to VPS
 ```bash
-ssh root@142.44.160.36
+ssh root@yourvpsname
 # or
-ssh your-username@142.44.160.36
+ssh your-username@yourvpsname
 ```
 
 ### 2. Clone Repository
@@ -367,7 +367,7 @@ Both services should run together:
 
 1. **Redis Server** (port 6379)
 2. **Redis Sync Service** (syncs DB → Redis)
-3. **FastAPI Cache API** (port 8001)
+3. **FastAPI Cache API** (port 6002)
 
 All three work together:
 - Sync service keeps Redis updated with database changes
@@ -393,7 +393,7 @@ All three work together:
          ↓
 ┌──────────────────┐       ┌──────────────────┐
 │  Redis Server    │←──────│  FastAPI App     │
-│  localhost:6379  │       │  0.0.0.0:8001    │
+│  localhost:6379  │       │  0.0.0.0:6002    │
 └──────────────────┘       └────────┬─────────┘
                                     │
                                     │ HTTP

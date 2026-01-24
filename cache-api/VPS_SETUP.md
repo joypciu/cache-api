@@ -114,7 +114,7 @@ CACHE_TTL=3600
 
 # API Configuration
 API_HOST=0.0.0.0
-API_PORT=8001
+API_PORT=6002
 
 # API Authentication (REQUIRED)
 # Generate a secure token for production
@@ -168,13 +168,13 @@ sudo systemctl status cache-api
 ```bash
 # Test with your API token (replace with your actual token from .env)
 curl -H "Authorization: Bearer your-actual-token-here" \
-  http://localhost:8001/health
+  http://localhost:6002/health
 
 # Expected response:
 # {"status": "healthy", "cache": {...}}
 
 # Test without token (should fail with 401)
-curl http://localhost:8001/health
+curl http://localhost:6002/health
 
 # Expected response:
 # {"detail": "Not authenticated"}
@@ -196,8 +196,8 @@ sudo journalctl -u cache-api -n 50
 ### 11. Configure Firewall (if applicable)
 
 ```bash
-# Allow port 8001 for the API
-sudo ufw allow 8001/tcp
+# Allow port 6002 for the API
+sudo ufw allow 6002/tcp
 
 # Allow SSH (if not already allowed)
 sudo ufw allow OpenSSH
@@ -304,7 +304,7 @@ After GitHub Actions completes:
 ssh ubuntu@your-vps-ip
 
 # Test API with authentication
-curl -H "Authorization: Bearer your-actual-token" \\\n  http://localhost:8001/health
+curl -H "Authorization: Bearer your-actual-token" \\\n  http://localhost:6002/health
 
 # Check service logs
 sudo journalctl -u cache-api -n 50
@@ -349,18 +349,18 @@ redis-cli KEYS 'cache:*'
 ```bash
 # Health check (requires authentication)
 curl -H "Authorization: Bearer your-token-here" \
-  http://localhost:8001/health
+  http://localhost:6002/health
 
 # Cache statistics (requires authentication)
 curl -H "Authorization: Bearer your-token-here" \
-  http://localhost:8001/cache/stats
+  http://localhost:6002/cache/stats
 
 # Test query (requires authentication)
 curl -H "Authorization: Bearer your-token-here" \
-  "http://localhost:8001/cache?team=Lakers&sport=Basketball"
+  "http://localhost:6002/cache?team=Lakers&sport=Basketball"
 
 # Public endpoint (no auth required)
-curl http://localhost:8001/
+curl http://localhost:6002/
 ```
 
 ### Service Management Commands
@@ -391,7 +391,7 @@ sudo systemctl disable cache-api
 # Via API (requires authentication)
 curl -X DELETE \
   -H "Authorization: Bearer your-token-here" \
-  http://localhost:8001/cache/clear
+  http://localhost:6002/cache/clear
 
 # Via Redis CLI (direct access, no auth needed)
 redis-cli FLUSHDB
@@ -406,10 +406,10 @@ redis-cli FLUSHDB
 sudo journalctl -u cache-api -n 100
 
 # Check if port is already in use
-sudo netstat -tlnp | grep :8001
+sudo netstat -tlnp | grep :6002
 
-# Kill process on port 8001
-sudo fuser -k 8001/tcp
+# Kill process on port 6002
+sudo fuser -k 6002/tcp
 
 # Restart service
 sudo systemctl restart cache-api
@@ -545,4 +545,4 @@ For issues or questions:
 - Check application logs: `sudo journalctl -u cache-api -n 100`
 - Check Redis logs: `sudo journalctl -u redis-server -n 100`
 - Review GitHub Actions workflow logs
-- Check the API health endpoint: `curl http://localhost:8001/health`
+- Check the API health endpoint: `curl http://localhost:6002/health`

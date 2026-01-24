@@ -152,7 +152,7 @@ If you want to test before merging:
 1. **SSH to VPS:**
 
    ```bash
-   ssh ubuntu@142.44.160.36
+   ssh ubuntu@your-vps
    ```
 
 2. **Navigate to service directory:**
@@ -225,7 +225,7 @@ If you want to test before merging:
 
 Make sure these secrets are configured in your GitHub repository:
 
-- `VPS_HOST` - Your VPS IP (e.g., 142.44.160.36)
+- `VPS_HOST` - Your VPS IP 
 - `VPS_USERNAME` - SSH username (ubuntu)
 - `VPS_SSH_KEY` - Your private SSH key
 - `VPS_PORT` - SSH port (22)
@@ -238,7 +238,7 @@ Make sure these secrets are configured in your GitHub repository:
 
 ```bash
 # SSH into your VPS
-ssh ubuntu@142.44.160.36
+ssh your-vps
 
 # Navigate to service directory
 cd /home/ubuntu/services/cache-api
@@ -274,15 +274,7 @@ GitHub Actions will automatically deploy with authentication enabled.
 
 ### \u2705 Step 3: Test Authentication
 
-After deployment:
 
-```bash
-# Test with authentication (replace with your actual token)
-curl -H "Authorization: Bearer your-actual-token" \\\n  http://142.44.160.36:8001/health
-
-# Test without authentication (should fail)
-curl http://142.44.160.36:8001/health
-# Expected: {"detail": "Not authenticated"}
 ```
 
 ## Testing the Deployment
@@ -292,26 +284,6 @@ After deployment (either automated or manual):
 ```bash
 # Note: All endpoints now require authentication
 
-# Test health endpoint
-curl -H "Authorization: Bearer your-token" \\\n  http://142.44.160.36:8001/health
-
-# Test cache statistics
-curl -H "Authorization: Bearer your-token" \\\n  http://142.44.160.36:8001/cache/stats
-
-# Test team query (should be cached after first request)
-curl -H "Authorization: Bearer your-token" \\\n  "http://142.44.160.36:8001/cache?team=Lakers&sport=Basketball"
-
-# Test league query (new feature)
-curl -H "Authorization: Bearer your-token" \\\n  "http://142.44.160.36:8001/cache?league=Premier%20League&sport=Soccer"
-
-# Test player query
-curl -H "Authorization: Bearer your-token" \\\n  "http://142.44.160.36:8001/cache?player=LeBron%20James"
-
-# Clear cache
-curl -X DELETE \\\n  -H "Authorization: Bearer your-token" \\\n  http://142.44.160.36:8001/cache/clear
-
-# Public endpoint (no auth required)
-curl http://142.44.160.36:8001/
 ```
 
 ## Monitoring
