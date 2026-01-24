@@ -23,6 +23,9 @@ from request_tracking import (
     get_or_create_session, track_request, get_request_logs,
     get_session_summary, get_session_details, clear_old_sessions
 )
+from redis_rate_limiter import (
+    check_rate_limit, get_rate_limit_stats, get_url_stats, get_request_stats
+)
 
 # Load environment variables
 load_dotenv()
@@ -363,6 +366,7 @@ async def invalidate_specific_cache(
 
 @app.get("/cache")
 async def get_cache(
+    request: Request,
     market: Optional[str] = Query(None, description="Market type (e.g., 'moneyline', 'spread', 'total')"),
     team: Optional[str] = Query(None, description="Team name to look up"),
     player: Optional[str] = Query(None, description="Player name to look up"),
@@ -372,6 +376,8 @@ async def get_cache(
 ) -> JSONResponse:
     """
     Get normalized cache entry for market, team, player, or league (requires authentication).
+    
+    Rate Limited: 200 requests per minute per user.
     
     Parameters:
     - market: Market type to look up
@@ -452,9 +458,11 @@ async def get_cache(
         )
 
 @app.post("/cache/batch")
-async def get_batch_cache(request: BatchQueryRequest = Body(...), token: str = Depends(verify_token)) -> JSONResponse:
+async def get_batch_cache(request: Request, batch_request: BatchQueryRequest = Body(...), token: str = Depends(verify_token)) -> JSONResponse:
     """
     Batch cache query endpoint - independent searches for multiple items per category (requires authentication).
+    
+    Rate Limited: 20 requests per minute per user.
     
     Queries multiple teams, players, markets, and leagues in a single request.
     Each item is searched independently (not combined for precision).
@@ -490,13 +498,36 @@ async def get_batch_cache(request: BatchQueryRequest = Body(...), token: str = D
         }
     }
     """
+    # Rate limit check (skip for admin)
+    if token != ADMIN_KEY:
+        identifier = token
+        allowed, remaining, reset_time = check_rate_limit(identifier, "/cache/batch")
+        
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "Rate limit exceeded",
+                    "message": "Too many batch requests. Please try again later.",
+                    "limit": 20,
+                    "window_seconds": 60,
+                    "retry_after": reset_time - int(time.time())
+                },
+                headers={
+                    "X-RateLimit-Limit": "20",
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str(reset_time),
+                    "Retry-After": str(reset_time - int(time.time()))
+                }
+            )
+    
     try:
         result = get_batch_cache_entries(
-            teams=request.team,
-            players=request.player,
-            markets=request.market,
-            sport=request.sport,
-            leagues=request.league
+            teams=batch_request.team,
+            players=batch_request.player,
+            markets=batch_request.market,
+            sport=batch_request.sport,
+            leagues=batch_request.league
         )
         
         return JSONResponse(
@@ -511,9 +542,11 @@ async def get_batch_cache(request: BatchQueryRequest = Body(...), token: str = D
         )
 
 @app.post("/cache/batch/precision")
-async def get_precision_batch_cache(request: PrecisionBatchRequest = Body(...), token: str = Depends(verify_token)) -> JSONResponse:
+async def get_precision_batch_cache(request: Request, precision_request: PrecisionBatchRequest = Body(...), token: str = Depends(verify_token)) -> JSONResponse:
     """
     Precision batch cache query endpoint - combined parameter searches in batch (requires authentication).
+    
+    Rate Limited: 10 requests per minute per user.
     
     Allows multiple precise queries where parameters can be combined for specificity.
     Each query item can have multiple parameters that narrow the search.
@@ -563,8 +596,31 @@ async def get_precision_batch_cache(request: PrecisionBatchRequest = Body(...), 
         "failed": 1
     }
     """
+    # Rate limit check (skip for admin)
+    if token != ADMIN_KEY:
+        identifier = token
+        allowed, remaining, reset_time = check_rate_limit(identifier, "/cache/batch/precision")
+        
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "Rate limit exceeded",
+                    "message": "Too many precision batch requests. Please try again later.",
+                    "limit": 10,
+                    "window_seconds": 60,
+                    "retry_after": reset_time - int(time.time())
+                },
+                headers={
+                    "X-RateLimit-Limit": "10",
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str(reset_time),
+                    "Retry-After": str(reset_time - int(time.time()))
+                }
+            )
+    
     try:
-        result = get_precision_batch_cache_entries(request.queries)
+        result = get_precision_batch_cache_entries(precision_request.queries)
         
         return JSONResponse(
             status_code=200,
@@ -843,6 +899,129 @@ async def cleanup_old_sessions(
             "status": "success",
             "message": f"Sessions older than {days_old} days have been cleared"
         }
+    )
+
+
+@app.get("/admin/rate-limits")
+async def get_rate_limits(
+    identifier: Optional[str] = Query(None, description="Filter by specific user identifier"),
+    token: str = Depends(verify_admin_token)
+):
+    """
+    Admin-only endpoint to view rate limit statistics.
+    
+    Query parameters:
+    - identifier: Optional specific user to check (None = all users)
+    
+    Returns:
+    {
+        "timestamp": 1706098800,
+        "window_seconds": 60,
+        "summary": {
+            "total_clients": 50,
+            "total_active_requests": 5000,
+            "limited_clients": 3
+        },
+        "clients": [
+            {
+                "identifier": "12345",
+                "total_requests": 150,
+                "status": "normal",
+                "endpoints": {
+                    "/cache": {
+                        "requests": 120,
+                        "limit": 200,
+                        "remaining": 80,
+                        "usage_percent": 60.0,
+                        "status": "normal"
+                    },
+                    "/cache/batch": {
+                        "requests": 15,
+                        "limit": 20,
+                        "remaining": 5,
+                        "usage_percent": 75.0,
+                        "status": "normal"
+                    }
+                }
+            }
+        ]
+    }
+    """
+    stats = get_rate_limit_stats(identifier)
+    
+    return JSONResponse(
+        status_code=200,
+        content=stats
+    )
+
+
+@app.get("/admin/url-stats")
+async def get_url_statistics(token: str = Depends(verify_admin_token)):
+    """
+    Admin-only endpoint to view URL access statistics.
+    
+    Returns:
+    {
+        "timestamp": 1706098800,
+        "total_endpoints": 3,
+        "total_requests": 5000,
+        "endpoints": [
+            {
+                "endpoint": "/cache",
+                "total_requests": 3000,
+                "unique_clients": 45,
+                "avg_requests_per_client": 66.67,
+                "rate_limit": 200,
+                "window_seconds": 60
+            },
+            {
+                "endpoint": "/cache/batch",
+                "total_requests": 1500,
+                "unique_clients": 30,
+                "avg_requests_per_client": 50.0,
+                "rate_limit": 20,
+                "window_seconds": 60
+            }
+        ]
+    }
+    """
+    stats = get_url_stats()
+    
+    return JSONResponse(
+        status_code=200,
+        content=stats
+    )
+
+
+@app.get("/admin/request-stats")
+async def get_request_statistics(token: str = Depends(verify_admin_token)):
+    """
+    Admin-only endpoint to view aggregated request statistics.
+    
+    Returns:
+    {
+        "timestamp": 1706098800,
+        "window_seconds": 60,
+        "total_requests": 5000,
+        "total_clients": 50,
+        "total_endpoints": 3,
+        "by_endpoint": {
+            "/cache": 3000,
+            "/cache/batch": 1500,
+            "/cache/batch/precision": 500
+        },
+        "status": {
+            "normal": 45,
+            "near_limit": 3,
+            "rate_limited": 2
+        }
+    }
+    """
+    stats = get_request_stats()
+    
+    return JSONResponse(
+        status_code=200,
+        content=stats
     )
 
 
