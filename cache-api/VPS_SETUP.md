@@ -4,7 +4,7 @@ This guide provides step-by-step instructions for setting up the Cache API with 
 
 ## Prerequisites
 
-- Ubuntu VPS (tested on Ubuntu 20.04/22.04)
+- Ubuntu VPS 
 - SSH access to the VPS
 - GitHub repository access
 - Domain or IP address for the VPS
@@ -244,10 +244,10 @@ Go to your GitHub repository \u2192 Settings \u2192 Secrets and variables \u2192
 
 Add the following secrets:
 
-- `VPS_HOST`: Your VPS IP address (e.g., `142.44.160.36`)
-- `VPS_USERNAME`: SSH username (usually `ubuntu`)
+- `VPS_HOST`: Your VPS IP address 
+- `VPS_USERNAME`: SSH username 
 - `VPS_SSH_KEY`: Your private SSH key
-- `VPS_PORT`: SSH port (usually `22`)
+- `VPS_PORT`: SSH port 
 
 ### 3. Generate SSH Key (if needed)
 
