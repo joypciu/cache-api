@@ -16,6 +16,7 @@ RATE_LIMITS = {
     "/cache": {"limit": 200, "window": 60},                     # 200 requests per minute
     "/cache/batch": {"limit": 20, "window": 60},                # 20 requests per minute (expensive)
     "/cache/batch/precision": {"limit": 10, "window": 60},      # 10 requests per minute (very expensive)
+    "/auth/uuid": {"limit": 5, "window": 60},                   # 5 requests per minute (security - prevent brute force)
 }
 
 

@@ -33,20 +33,41 @@ load_dotenv()
 # Security configuration
 security = HTTPBearer()
 
-# Non-admin key (read-only access to cache endpoints)
-NON_ADMIN_KEY = "12345"
+# Load authentication tokens from environment variables
+# These MUST be set in .env file for security
+NON_ADMIN_KEY = os.getenv('NON_ADMIN_TOKEN')
+ADMIN_KEY = os.getenv('ADMIN_TOKEN')
 
-# Admin key (full access to all endpoints)
-ADMIN_KEY = "eternitylabsadmin"
+# Validate that tokens are configured
+if not NON_ADMIN_KEY or not ADMIN_KEY:
+    raise ValueError(
+        "SECURITY ERROR: API tokens not configured!\n"
+        "Please create a .env file with:\n"
+        "  ADMIN_TOKEN=your-secure-admin-token\n"
+        "  NON_ADMIN_TOKEN=your-secure-user-token\n\n"
+        "Generate secure tokens with:\n"
+        "  python -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
+    )
 
 # All valid tokens (admin + non-admin)
 VALID_API_TOKENS = {ADMIN_KEY, NON_ADMIN_KEY}
 
-# Debug: Print loaded tokens
-print("Loaded API Tokens:")
-print(f"   Admin Key: {ADMIN_KEY}")
-print(f"   Non-Admin Key: {NON_ADMIN_KEY}")
-print(f"   Valid Tokens Set: {VALID_API_TOKENS}")
+def mask_token(token: str) -> str:
+    """Mask token for secure logging - show only first 4 and last 4 chars"""
+    if len(token) <= 8:
+        return "***"
+    return f"{token[:4]}...{token[-4:]}"
+
+# Startup message (fully masked for security)
+print("✓ API Security initialized")
+print(f"  Admin token: {mask_token(ADMIN_KEY)}")
+print(f"  User token: {mask_token(NON_ADMIN_KEY)}")
+
+def mask_token(token: str) -> str:
+    """Mask token for secure logging - show only first 4 and last 4 chars"""
+    if len(token) <= 8:
+        return "***"
+    return f"{token[:4]}...{token[-4:]}"
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
     """
@@ -70,14 +91,14 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security))
     
     token = credentials.credentials
     
-    # Debug: Log received token
-    print(f"DEBUG: Received token: '{token}' (length: {len(token)})")
+    # Secure logging - never print actual token
+    masked = mask_token(token)
     
     # Check if it's a UUID-based authentication (for non-admin users)
     if token.startswith("uuid:"):
         uuid_value = token[5:]  # Remove "uuid:" prefix
         if uuid_value and len(uuid_value) > 0:
-            print(f"SUCCESS: UUID authentication validated: {uuid_value}")
+            print(f"✓ UUID authentication: {mask_token(uuid_value)}")
             return token  # Return the full "uuid:xxx" format
         else:
             raise HTTPException(
@@ -86,17 +107,16 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security))
             )
     
     # Check if it's a standard bearer token
-    print(f"DEBUG: Token in VALID_API_TOKENS: {token in VALID_API_TOKENS}")
-    print(f"DEBUG: Valid tokens: {VALID_API_TOKENS}")
-    
     if token not in VALID_API_TOKENS:
-        print(f"ERROR: Token '{token}' not found in valid tokens")
+        print(f"✗ Authentication failed: Invalid token {masked}")
         raise HTTPException(
             status_code=401,
             detail="Invalid or expired API token. For non-admin access, use 'uuid:your-uuid-here' format."
         )
     
-    print(f"SUCCESS: Token '{token}' validated successfully")
+    # Success - determine token type
+    token_type = "admin" if token == ADMIN_KEY else "user"
+    print(f"✓ Authentication successful: {token_type} token {masked}")
     return token
 
 def verify_admin_token(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
@@ -396,6 +416,29 @@ async def get_cache(
     - /cache?market=moneyline
     """
     
+    # Rate limit check (skip for admin)
+    if token != ADMIN_KEY:
+        identifier = token
+        allowed, remaining, reset_time = check_rate_limit(identifier, "/cache")
+        
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "Rate limit exceeded",
+                    "message": "Too many requests. Please try again later.",
+                    "limit": 200,
+                    "window_seconds": 60,
+                    "retry_after": reset_time - int(time.time())
+                },
+                headers={
+                    "X-RateLimit-Limit": "200",
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str(reset_time),
+                    "Retry-After": str(reset_time - int(time.time()))
+                }
+            )
+    
     # Validate that at least one parameter is provided
     if not any([market, team, player, league]):
         raise HTTPException(
@@ -648,6 +691,8 @@ async def uuid_login(request: Request, login_data: UUIDLoginRequest = Body(...))
     - Timestamp
     - User agent
     
+    Rate Limited: 5 login attempts per minute per IP address (prevents brute force attacks).
+    
     Request body:
     {
         "uuid": "550e8400-e29b-41d4-a716-446655440000"
@@ -682,6 +727,28 @@ async def uuid_login(request: Request, login_data: UUIDLoginRequest = Body(...))
             cf_ip = request.headers.get("CF-Connecting-IP")
             if cf_ip:
                 client_ip = cf_ip.strip()
+    
+    # Rate limit check - prevent brute force attacks (5 attempts per minute per IP)
+    identifier = f"uuid_login:{client_ip}"
+    allowed, remaining, reset_time = check_rate_limit(identifier, "/auth/uuid")
+    
+    if not allowed:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": "Rate limit exceeded",
+                "message": "Too many login attempts. Please try again later.",
+                "limit": 5,
+                "window_seconds": 60,
+                "retry_after": reset_time - int(time.time())
+            },
+            headers={
+                "X-RateLimit-Limit": "5",
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(reset_time),
+                "Retry-After": str(reset_time - int(time.time()))
+            }
+        )
     
     # Get user agent
     user_agent = request.headers.get("User-Agent", "unknown")
@@ -1026,11 +1093,16 @@ async def get_request_statistics(token: str = Depends(verify_admin_token)):
 
 
 if __name__ == "__main__":
-    # Run the server on port 6002
+    # Get port from environment or use 6002 as default
+    API_PORT = int(os.getenv('API_PORT', 6002))
+    API_HOST = os.getenv('API_HOST', '0.0.0.0')
+    
+    print(f"Starting server on {API_HOST}:{API_PORT}")
+    
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=6002,
+        host=API_HOST,
+        port=API_PORT,
         reload=False,
         log_level="info"
     )
