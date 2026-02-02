@@ -500,19 +500,33 @@ def get_cache_entry(
         
         if market:
             normalized_market = normalize_key(market)
+            # Create a stripped version for robust matching (no spaces, no underscores)
+            market_search_term = market.lower().replace(" ", "").replace("_", "")
             
-            # First, resolve market alias to market_id
+            # First, try exact alias match (normalized)
             cursor.execute("""
                 SELECT DISTINCT market_id FROM market_aliases
-                WHERE LOWER(alias) = ?
+                WHERE LOWER(REPLACE(REPLACE(alias, ' ', ''), '_', '')) = ?
                 LIMIT 1
-            """, (normalized_market,))
+            """, (market_search_term,))
             
             alias_result = cursor.fetchone()
-            if not alias_result:
-                return None
             
-            market_id = alias_result[0]
+            if alias_result:
+                market_id = alias_result[0]
+            else:
+                 # No exact alias match, try direct match on markets table
+                cursor.execute("""
+                    SELECT id FROM markets
+                    WHERE LOWER(REPLACE(REPLACE(name, ' ', ''), '_', '')) = ?
+                    LIMIT 1
+                """, (market_search_term,))
+                direct_result = cursor.fetchone()
+                
+                if not direct_result:
+                    return None
+                    
+                market_id = direct_result[0]
             
             # Search for market by resolved ID
             cursor.execute("""
