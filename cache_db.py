@@ -110,11 +110,20 @@ def get_cache_entry(
             player_ids_from_aliases = [row[0] for row in cursor.fetchall()]
             
             # 2. Check players table directly
+            # Try exact match first (much faster)
             cursor.execute("""
                 SELECT DISTINCT id FROM players
-                WHERE LOWER(name) LIKE ? OR LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ?
-            """, (f"%{normalized_player}%", f"%{normalized_player}%", f"%{normalized_player}%"))
+                WHERE name = ? COLLATE NOCASE
+            """, (player.strip(),))
             player_ids_from_main = [row[0] for row in cursor.fetchall()]
+
+            if not player_ids_from_main:
+                # Fallback to slower partial match
+                cursor.execute("""
+                    SELECT DISTINCT id FROM players
+                    WHERE LOWER(name) LIKE ? OR LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ?
+                """, (f"%{normalized_player}%", f"%{normalized_player}%", f"%{normalized_player}%"))
+                player_ids_from_main = [row[0] for row in cursor.fetchall()]
             
             player_ids = list(set(player_ids_from_aliases + player_ids_from_main))
             
@@ -130,20 +139,40 @@ def get_cache_entry(
             team_ids_from_aliases = [row[0] for row in cursor.fetchall()]
             
             # 2. Check teams table directly
+            team_ids_from_main = []
+            
+            # Try exact match first
             if normalized_sport:
                 cursor.execute("""
                     SELECT DISTINCT t.id FROM teams t
                     LEFT JOIN sports s ON t.sport_id = s.id
-                    WHERE (LOWER(t.name) LIKE ? OR LOWER(t.nickname) LIKE ? OR LOWER(t.abbreviation) = ?)
+                    WHERE t.name = ? COLLATE NOCASE
                       AND LOWER(s.name) = ?
-                """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team, normalized_sport))
+                """, (team.strip(), normalized_sport))
             else:
                 cursor.execute("""
                     SELECT DISTINCT id FROM teams
-                    WHERE LOWER(name) LIKE ? OR LOWER(nickname) LIKE ? OR LOWER(abbreviation) = ?
-                """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team))
+                    WHERE name = ? COLLATE NOCASE
+                """, (team.strip(),))
             
             team_ids_from_main = [row[0] for row in cursor.fetchall()]
+            
+            if not team_ids_from_main:
+                # Fallback to slower partial match
+                if normalized_sport:
+                    cursor.execute("""
+                        SELECT DISTINCT t.id FROM teams t
+                        LEFT JOIN sports s ON t.sport_id = s.id
+                        WHERE (LOWER(t.name) LIKE ? OR LOWER(t.nickname) LIKE ? OR LOWER(t.abbreviation) = ?)
+                          AND LOWER(s.name) = ?
+                    """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team, normalized_sport))
+                else:
+                    cursor.execute("""
+                        SELECT DISTINCT id FROM teams
+                        WHERE LOWER(name) LIKE ? OR LOWER(nickname) LIKE ? OR LOWER(abbreviation) = ?
+                    """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team))
+                
+                team_ids_from_main = [row[0] for row in cursor.fetchall()]
             
             team_ids = list(set(team_ids_from_aliases + team_ids_from_main))
             
@@ -238,20 +267,39 @@ def get_cache_entry(
             team_ids_from_aliases = [row[0] for row in cursor.fetchall()]
             
             # 2. Check teams table directly (name, nickname, abbreviation)
+            team_ids_from_main = []
+            
+            # Try exact match first
             if normalized_sport:
                 cursor.execute("""
                     SELECT DISTINCT t.id FROM teams t
                     LEFT JOIN sports s ON t.sport_id = s.id
-                    WHERE (LOWER(t.name) LIKE ? OR LOWER(t.nickname) LIKE ? OR LOWER(t.abbreviation) = ?)
+                    WHERE t.name = ? COLLATE NOCASE
                       AND LOWER(s.name) = ?
-                """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team, normalized_sport))
+                """, (team.strip(), normalized_sport))
             else:
                 cursor.execute("""
                     SELECT DISTINCT id FROM teams
-                    WHERE LOWER(name) LIKE ? OR LOWER(nickname) LIKE ? OR LOWER(abbreviation) = ?
-                """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team))
-            
+                    WHERE name = ? COLLATE NOCASE
+                """, (team.strip(),))
+                
             team_ids_from_main = [row[0] for row in cursor.fetchall()]
+            
+            if not team_ids_from_main:
+                if normalized_sport:
+                    cursor.execute("""
+                        SELECT DISTINCT t.id FROM teams t
+                        LEFT JOIN sports s ON t.sport_id = s.id
+                        WHERE (LOWER(t.name) LIKE ? OR LOWER(t.nickname) LIKE ? OR LOWER(t.abbreviation) = ?)
+                          AND LOWER(s.name) = ?
+                    """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team, normalized_sport))
+                else:
+                    cursor.execute("""
+                        SELECT DISTINCT id FROM teams
+                        WHERE LOWER(name) LIKE ? OR LOWER(nickname) LIKE ? OR LOWER(abbreviation) = ?
+                    """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team))
+            
+                team_ids_from_main = [row[0] for row in cursor.fetchall()]
             
             # Combine and deduplicate team IDs
             team_ids = list(set(team_ids_from_aliases + team_ids_from_main))
@@ -343,11 +391,19 @@ def get_cache_entry(
             player_ids_from_aliases = [row[0] for row in cursor.fetchall()]
             
             # 2. Check players table directly (name, first_name, last_name)
+            # Try exact match first
             cursor.execute("""
                 SELECT DISTINCT id FROM players
-                WHERE LOWER(name) LIKE ? OR LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ?
-            """, (f"%{normalized_player}%", f"%{normalized_player}%", f"%{normalized_player}%"))
+                WHERE name = ? COLLATE NOCASE
+            """, (player.strip(),))
             player_ids_from_main = [row[0] for row in cursor.fetchall()]
+            
+            if not player_ids_from_main:
+                cursor.execute("""
+                    SELECT DISTINCT id FROM players
+                    WHERE LOWER(name) LIKE ? OR LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ?
+                """, (f"%{normalized_player}%", f"%{normalized_player}%", f"%{normalized_player}%"))
+                player_ids_from_main = [row[0] for row in cursor.fetchall()]
             
             # Combine and deduplicate player IDs
             player_ids = list(set(player_ids_from_aliases + player_ids_from_main))
@@ -415,21 +471,40 @@ def get_cache_entry(
             """, (normalized_league,))
             league_ids_from_aliases = [row[0] for row in cursor.fetchall()]
             
-            # 2. Check leagues table directly (name)
+            # 2. Check leagues table directly
+            league_ids_from_main = []
+            
+            # Try exact match first
             if normalized_sport:
                 cursor.execute("""
                     SELECT DISTINCT l.id FROM leagues l
                     LEFT JOIN sports s ON l.sport_id = s.id
-                    WHERE LOWER(l.name) LIKE ?
+                    WHERE l.name = ? COLLATE NOCASE
                       AND LOWER(s.name) = ?
-                """, (f"%{normalized_league}%", normalized_sport))
+                """, (league.strip(), normalized_sport))
             else:
                 cursor.execute("""
                     SELECT DISTINCT id FROM leagues
-                    WHERE LOWER(name) LIKE ?
-                """, (f"%{normalized_league}%",))
+                    WHERE name = ? COLLATE NOCASE
+                """, (league.strip(),))
             
             league_ids_from_main = [row[0] for row in cursor.fetchall()]
+
+            if not league_ids_from_main:
+                if normalized_sport:
+                    cursor.execute("""
+                        SELECT DISTINCT l.id FROM leagues l
+                        LEFT JOIN sports s ON l.sport_id = s.id
+                        WHERE LOWER(l.name) LIKE ?
+                          AND LOWER(s.name) = ?
+                    """, (f"%{normalized_league}%", normalized_sport))
+                else:
+                    cursor.execute("""
+                        SELECT DISTINCT id FROM leagues
+                        WHERE LOWER(name) LIKE ?
+                    """, (f"%{normalized_league}%",))
+                
+                league_ids_from_main = [row[0] for row in cursor.fetchall()]
             
             # Combine and deduplicate league IDs
             league_ids = list(set(league_ids_from_aliases + league_ids_from_main))
