@@ -117,7 +117,7 @@ def get_cache_entry(
             """, (player.strip(),))
             player_ids_from_main = [row[0] for row in cursor.fetchall()]
 
-            if not player_ids_from_main:
+            if not player_ids_from_main and len(normalized_player) > 2:
                 # Fallback to slower partial match
                 cursor.execute("""
                     SELECT DISTINCT id FROM players
@@ -285,7 +285,8 @@ def get_cache_entry(
                 
             team_ids_from_main = [row[0] for row in cursor.fetchall()]
             
-            if not team_ids_from_main:
+            # For short strings, SKIP fuzzy search to prevent performance kill (LIKE '%a%' matches everything)
+            if not team_ids_from_main and len(normalized_team) > 2:
                 if normalized_sport:
                     cursor.execute("""
                         SELECT DISTINCT t.id FROM teams t
@@ -398,7 +399,7 @@ def get_cache_entry(
             """, (player.strip(),))
             player_ids_from_main = [row[0] for row in cursor.fetchall()]
             
-            if not player_ids_from_main:
+            if not player_ids_from_main and len(normalized_player) > 2:
                 cursor.execute("""
                     SELECT DISTINCT id FROM players
                     WHERE LOWER(name) LIKE ? OR LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ?
