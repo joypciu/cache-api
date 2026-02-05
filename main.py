@@ -18,6 +18,9 @@ from collections import defaultdict
 from dotenv import load_dotenv
 from cache_db import get_cache_entry, get_batch_cache_entries, get_precision_batch_cache_entries
 from redis_cache import get_cache_stats, clear_all_cache, invalidate_cache
+import uuid
+import request_tracking
+import uuid_tracking
 
 # Load environment variables
 load_dotenv()
@@ -136,6 +139,71 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None
 )
+
+# Middleware for request tracking (UUID + GeoIP + Sessions)
+@app.middleware("http")
+async def track_request_middleware(request: Request, call_next):
+    start_time = time.time()
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Post-processing time
+    process_time = (time.time() - start_time) * 1000
+    
+    try:
+        # Extract IP
+        ip_address = request.client.host
+        user_agent = request.headers.get("user-agent", "unknown")
+        
+        # Extract Token
+        auth_header = request.headers.get("Authorization")
+        token = None
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+            
+        if token:
+            # Check if admin (ADMIN_KEY defined in global scope)
+            is_admin = (token == ADMIN_KEY)
+            
+            # Only track non-admin users
+            if not is_admin:
+                # Generate deterministic UUID from token
+                # This ensures the same token always maps to the same UUID
+                user_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, token))
+                
+                # Create/Get Session
+                session_id = request_tracking.get_or_create_session(
+                    token=token,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    user_identifier=user_uuid
+                )
+                
+                # Track UUID Login (Geo Location)
+                uuid_tracking.track_uuid_login(
+                    uuid=user_uuid,
+                    ip_address=ip_address,
+                    user_agent=user_agent
+                )
+                
+                # Track Request Details
+                request_tracking.track_request(
+                    session_id=session_id,
+                    method=request.method,
+                    path=request.url.path,
+                    query_params=dict(request.query_params),
+                    token=token,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    response_status=response.status_code,
+                    response_time_ms=process_time,
+                    uuid=user_uuid
+                )
+    except Exception as e:
+        print(f"Tracking error: {e}")
+        
+    return response
 
 # Request models for batch endpoints
 class BatchQueryRequest(BaseModel):

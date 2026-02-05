@@ -58,6 +58,32 @@ def get_league_priority(league_name: str) -> int:
         return 999  # All other leagues
 
 
+def expand_sports_terms(text: str) -> str:
+    """
+    Expand common sports abbreviations for better fuzzy matching.
+    """
+    text = text.lower()
+    replacements = {
+        "rush ": "rushing ",
+        "rec ": "receiving ",
+        "tds": "touchdowns",
+        "ints": "interceptions",
+        "fg": "field goal",
+        "xp": "extra point",
+        "1h": "1st half",
+        "2h": "2nd half",
+        "1st": "1st", # ensure casing standard if needed, though we use lower()
+        "yrds": "yards",
+        "yds": "yards",
+        "att": "attempts"
+    }
+    
+    for abbr, full in replacements.items():
+        if abbr in text:
+            text = text.replace(abbr, full)
+            
+    return text
+
 def get_cache_entry(
     market: Optional[str] = None,
     team: Optional[str] = None,
@@ -591,7 +617,8 @@ def get_cache_entry(
             if alias_result:
                 market_id = alias_result[0]
             else:
-                 # No exact alias match, try direct match on markets table
+                # No exact alias match, try direct match on markets table
+                # 1. Try exact stripped match
                 cursor.execute("""
                     SELECT id FROM markets
                     WHERE LOWER(REPLACE(REPLACE(name, ' ', ''), '_', '')) = ?
@@ -599,10 +626,41 @@ def get_cache_entry(
                 """, (market_search_term,))
                 direct_result = cursor.fetchone()
                 
-                if not direct_result:
-                    return None
+                if direct_result:
+                    market_id = direct_result[0]
+                else:
+                    # 2. Try fuzzy contain match (e.g. "Completion Percentage" -> "Player Passing Completion Percentage")
+                    # We normalize the input first to ensure good matching
+                    normalized_input = market.lower().strip()
                     
-                market_id = direct_result[0]
+                    # Search 2a: Direct fuzzy on input
+                    cursor.execute("""
+                        SELECT id FROM markets
+                        WHERE LOWER(name) LIKE ?
+                        ORDER BY LENGTH(name) ASC 
+                        LIMIT 1
+                    """, (f"%{normalized_input}%",))
+                    fuzzy_result = cursor.fetchone()
+                    
+                    if fuzzy_result:
+                         market_id = fuzzy_result[0]
+                    else:
+                        # Search 2b: Expanded abbreviations (Rush -> Rushing, etc)
+                        expanded_input = expand_sports_terms(normalized_input)
+                        if expanded_input != normalized_input:
+                            cursor.execute("""
+                                SELECT id FROM markets
+                                WHERE LOWER(name) LIKE ?
+                                ORDER BY LENGTH(name) ASC
+                                LIMIT 1
+                            """, (f"%{expanded_input}%",))
+                            expanded_result = cursor.fetchone()
+                            if expanded_result:
+                                market_id = expanded_result[0]
+                            else:
+                                return None
+                        else:
+                            return None
             
             # Search for market by resolved ID
             cursor.execute("""

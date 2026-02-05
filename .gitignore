@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Security / Secrets
+API_KEYS.md
+.env
+.env.local
+
 # C extensions
 *.so
 
@@ -90,3 +95,8 @@ tests/
 test/
 test_data/
 test_data.json
+# Local Databases and Logs
+request_logs/
+*.db-shm
+*.db-wal
+uuid_tracking.db
