@@ -171,6 +171,8 @@ function renderLogs(logs, total) {
         const date = new Date(log.timestamp).toLocaleString();
         const duration = log.response_time_ms ? `${log.response_time_ms.toFixed(2)}ms` : '-';
         const statusClass = log.response_status >= 400 ? 'status-error' : 'status-success';
+        const location = log.location || 'Unknown';
+        const token = log.token_masked || '-';
         
         return `
             <tr>
@@ -179,7 +181,11 @@ function renderLogs(logs, total) {
                 <td class="font-mono">${log.path}</td>
                 <td><span class="status-badge ${statusClass}">${log.response_status}</span></td>
                 <td>${duration}</td>
-                <td><small class="text-muted">${log.user_agent?.substring(0, 30)}...</small></td>
+                <td>
+                    <div><small><strong>IP:</strong> ${log.ip_address} (${location})</small></div>
+                    <div><small><strong>Token:</strong> ${token}</small></div>
+                    <div><small class="text-muted"><span title="${log.user_agent}">${log.user_agent?.substring(0, 20)}...</span></small></div>
+                </td>
             </tr>
         `;
     }).join('');

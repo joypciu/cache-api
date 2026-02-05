@@ -11,10 +11,31 @@ import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from contextlib import contextmanager
+import geoip2.database
 
 # Directory to store tracking data
 TRACKING_DIR = os.path.join(os.path.dirname(__file__), "request_logs")
 DB_FILE = os.path.join(TRACKING_DIR, "requests.db")
+GEOIP_DB_PATH = os.path.join(os.path.dirname(__file__), "geoip", "GeoLite2-City.mmdb")
+
+def get_location_from_ip(ip_address: str) -> Optional[str]:
+    """Resolve IP address to city/country using GeoIP2."""
+    if not os.path.exists(GEOIP_DB_PATH):
+        return None
+        
+    try:
+        with geoip2.database.Reader(GEOIP_DB_PATH) as reader:
+            response = reader.city(ip_address)
+            city = response.city.name
+            country = response.country.name
+            
+            if city and country:
+                return f"{city}, {country}"
+            elif country:
+                return country
+            return None
+    except Exception:
+        return None
 
 @contextmanager
 def get_db_connection():
@@ -164,43 +185,42 @@ def track_request(
         else:
             token_display = "***"
     else:
+        # User requested to see the non-admin token (masked for security, but identifiable)
         if len(token) > 8:
             token_display = f"{token[:4]}...{token[-4:]}"
         else:
-            token_display = "***"
+            token_display = token # Short tokens shown fully
+
+    # Location lookup
+    location = get_location_from_ip(ip_address)
 
     # Serialize complex types to JSON
     query_params_json = json.dumps(query_params) if query_params else "{}"
     body_data_json = json.dumps(body_data) if body_data else "{}"
-    
+
     import uuid as uuid_lib # Safety alias
     request_id = str(uuid_lib.uuid4())
     timestamp = datetime.now().isoformat()
 
     try:
         with get_db_connection() as conn:
+            # Add columns if they don't exist (Migration)
+            try:
+                conn.execute("ALTER TABLE requests ADD COLUMN location TEXT")
+            except sqlite3.OperationalError:
+                pass
+            
             # Insert request
             conn.execute('''
             INSERT INTO requests (
                 request_id, session_id, timestamp, method, path, query_params,
                 body_data, ip_address, user_agent, token_masked, uuid,
-                response_status, response_time_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                response_status, response_time_ms, location
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 request_id, session_id, timestamp, method, path, query_params_json,
                 body_data_json, ip_address, user_agent, token_display, uuid_str,
-                response_status, response_time_ms
-            ))
-            
-            # Update session stats
-            conn.execute('''
-            UPDATE sessions 
-            SET request_count = request_count + 1, last_activity = ?
-            WHERE session_id = ?
-            ''', (timestamp, session_id))
-            
-    except Exception as e:
-        print(f"Error tracking request: {e}")
+                response_status, response_time_ms, location
 
 def get_request_logs(
     session_id: Optional[str] = None,
