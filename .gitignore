@@ -100,3 +100,8 @@ request_logs/
 *.db-shm
 *.db-wal
 uuid_tracking.db
+
+
+# ignore md files
+final_report.md
+final_report.pdf

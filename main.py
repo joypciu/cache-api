@@ -577,6 +577,11 @@ async def get_sessions(token: str = Depends(verify_admin_token)):
     """Get active sessions summary (requires admin authentication)"""
     return request_tracking.get_session_summary()
 
+@app.get("/admin/stats/cache", tags=["admin"])
+async def get_cache_statistics(token: str = Depends(verify_admin_token)):
+    """Get Redis cache statistics (requires admin authentication)"""
+    return get_cache_stats()
+
 @app.get("/docs", include_in_schema=False)
 async def custom_swagger_ui_html(admin_token: Optional[str] = Query(None)):
     """
