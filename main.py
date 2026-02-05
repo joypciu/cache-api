@@ -537,6 +537,27 @@ async def get_precision_batch_cache(
         )
 
 
+@app.get("/admin/logs", tags=["admin"])
+async def get_request_logs(
+    limit: int = 100,
+    offset: int = 0,
+    session_id: Optional[str] = None,
+    path: Optional[str] = None,
+    token: str = Depends(verify_admin_token)
+):
+    """Get request logs (requires admin authentication)"""
+    return request_tracking.get_request_logs(
+        limit=limit, 
+        offset=offset, 
+        session_id=session_id, 
+        path_filter=path
+    )
+
+@app.get("/admin/sessions", tags=["admin"])
+async def get_sessions(token: str = Depends(verify_admin_token)):
+    """Get active sessions summary (requires admin authentication)"""
+    return request_tracking.get_session_summary()
+
 @app.get("/docs", include_in_schema=False)
 async def custom_swagger_ui_html(admin_token: Optional[str] = Query(None)):
     """
