@@ -146,14 +146,14 @@ def get_cache_entry(
                 cursor.execute("""
                     SELECT DISTINCT t.id FROM teams t
                     LEFT JOIN sports s ON t.sport_id = s.id
-                    WHERE t.name = ? COLLATE NOCASE
+                    WHERE (t.name = ? COLLATE NOCASE OR t.abbreviation = ? COLLATE NOCASE)
                       AND LOWER(s.name) = ?
-                """, (team.strip(), normalized_sport))
+                """, (team.strip(), team.strip(), normalized_sport))
             else:
                 cursor.execute("""
                     SELECT DISTINCT id FROM teams
-                    WHERE name = ? COLLATE NOCASE
-                """, (team.strip(),))
+                    WHERE name = ? COLLATE NOCASE OR abbreviation = ? COLLATE NOCASE
+                """, (team.strip(), team.strip()))
             
             team_ids_from_main = [row[0] for row in cursor.fetchall()]
             
@@ -274,14 +274,14 @@ def get_cache_entry(
                 cursor.execute("""
                     SELECT DISTINCT t.id FROM teams t
                     LEFT JOIN sports s ON t.sport_id = s.id
-                    WHERE t.name = ? COLLATE NOCASE
+                    WHERE (t.name = ? COLLATE NOCASE OR t.abbreviation = ? COLLATE NOCASE)
                       AND LOWER(s.name) = ?
-                """, (team.strip(), normalized_sport))
+                """, (team.strip(), team.strip(), normalized_sport))
             else:
                 cursor.execute("""
                     SELECT DISTINCT id FROM teams
-                    WHERE name = ? COLLATE NOCASE
-                """, (team.strip(),))
+                    WHERE name = ? COLLATE NOCASE OR abbreviation = ? COLLATE NOCASE
+                """, (team.strip(), team.strip()))
                 
             team_ids_from_main = [row[0] for row in cursor.fetchall()]
             
