@@ -221,6 +221,17 @@ def track_request(
                 request_id, session_id, timestamp, method, path, query_params_json,
                 body_data_json, ip_address, user_agent, token_display, uuid_str,
                 response_status, response_time_ms, location
+            ))
+
+            # Update session stats
+            conn.execute('''
+            UPDATE sessions
+            SET request_count = request_count + 1, last_activity = ?
+            WHERE session_id = ?
+            ''', (timestamp, session_id))
+
+    except Exception as e:
+        print(f"Error tracking request: {e}")
 
 def get_request_logs(
     session_id: Optional[str] = None,
