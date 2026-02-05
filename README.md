@@ -1,5 +1,8 @@
 # Cache API with Redis Caching
 
+main url: https://cache-api.eternitylabs.co/
+
+
 A high-performance FastAPI-based cache normalization service for sports betting data with Redis caching layer and token-based authentication.
 
 ## Features
@@ -722,6 +725,13 @@ The service runs on port **8001** by default. To change:
   - Lower TTL = More database queries, fresher data
 - **Resource Limits**: Adjust systemd service limits based on workload
 - **Connection Pooling**: Redis client uses connection pooling automatically
+
+### Database Search Optimization
+
+- **Exact Match Priority**: Queries prioritize exact case-insensitive matches (including team abbreviations like 'NE', 'SEA'). This resolves in <1ms.
+- **Short Term Protection**: Partial/Fuzzy searching is **disabled** for terms with 2 characters or fewer to prevent database scan timeouts.
+  - *Example*: Searching "ny" checks for exact matches. If not found, it returns immediately instead of scanning for all names containing "ny".
+- **Indexed Lookups**: All lookups rely on `COLLATE NOCASE` database indexes for O(1) performance on exact matches.
 
 ### Monitoring Performance
 
