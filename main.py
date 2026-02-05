@@ -9,6 +9,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
+from fastapi.concurrency import run_in_threadpool
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 import uvicorn
@@ -361,7 +362,14 @@ async def get_cache(
     
     # Get the cache entry
     try:
-        result = get_cache_entry(market=market, team=team, player=player, sport=sport, league=league)
+        result = await run_in_threadpool(
+            get_cache_entry,
+            market=market, 
+            team=team, 
+            player=player, 
+            sport=sport, 
+            league=league
+        )
         
         if result is None:
             return JSONResponse(
@@ -445,7 +453,8 @@ async def get_batch_cache(
     }
     """
     try:
-        result = get_batch_cache_entries(
+        result = await run_in_threadpool(
+            get_batch_cache_entries,
             teams=request_body.team,
             players=request_body.player,
             markets=request_body.market,
@@ -523,7 +532,7 @@ async def get_precision_batch_cache(
     }
     """
     try:
-        result = get_precision_batch_cache_entries(request_body.queries)
+        result = await run_in_threadpool(get_precision_batch_cache_entries, request_body.queries)
         
         return JSONResponse(
             status_code=200,
