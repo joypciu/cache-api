@@ -8,7 +8,8 @@ from fastapi import FastAPI, Query, HTTPException, Body, Security, Depends, Requ
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
@@ -140,6 +141,15 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None
 )
+
+# Mount static files for dashboard
+app.mount("/admin/js", StaticFiles(directory="js"), name="admin_js")
+app.mount("/admin/css", StaticFiles(directory="css"), name="admin_css")
+
+@app.get("/admin/dashboard", tags=["admin"])
+async def serve_dashboard():
+    """Serve the admin dashboard"""
+    return FileResponse("dashboard.html")
 
 # Middleware for request tracking (UUID + GeoIP + Sessions)
 @app.middleware("http")
