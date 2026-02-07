@@ -1061,8 +1061,8 @@ def _resolve_bulk_markets(conn: sqlite3.Connection, market_names: List[str]) -> 
     
     # Load ALL markets (ID, name)
     # This is much faster than 50 LIKE queries
-    conn.execute("SELECT id, name FROM markets")
-    all_markets = conn.fetchall() # List of Row
+    cursor = conn.execute("SELECT id, name FROM markets")
+    all_markets = cursor.fetchall() # List of Row
     
     # Create helper maps
     # 1. Exact Name Map
@@ -1071,8 +1071,8 @@ def _resolve_bulk_markets(conn: sqlite3.Connection, market_names: List[str]) -> 
     stripped_map = {m["name"].lower().replace(" ", "").replace("_", ""): m["id"] for m in all_markets}
     
     # 3. Check alias table
-    conn.execute("SELECT alias, market_id FROM market_aliases")
-    alias_rows = conn.fetchall()
+    cursor = conn.execute("SELECT alias, market_id FROM market_aliases")
+    alias_rows = cursor.fetchall()
     alias_map = {row["alias"].lower().replace(" ", "").replace("_", ""): row["market_id"] for row in alias_rows}
     
     # Process inputs
