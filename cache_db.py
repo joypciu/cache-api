@@ -5,6 +5,7 @@ Provides database access to sports data using SQLite with Redis caching.
 
 import sqlite3
 import os
+import time
 from typing import Optional, Dict, Any, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from redis_cache import get_cached_data, set_cached_data
@@ -765,11 +766,6 @@ def get_all_players() -> List[Dict[str, Any]]:
         conn.close()
 
 
-def get_all_markets() -> List[Dict[str, Any]]:
-    """Get all markets from database"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
     try:
         cursor.execute("""
             SELECT m.id, m.name, m.market_type_id
@@ -781,6 +777,384 @@ def get_all_markets() -> List[Dict[str, Any]]:
         conn.close()
 
 
+def _chunk_list(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+
+def _resolve_batch_teams(conn: sqlite3.Connection, team_names: List[str], sport: Optional[str]) -> Dict[str, Any]:
+    """Batch resolve teams using optimized set-based queries"""
+    results = {}
+    normalized_sport = normalize_key(sport) if sport else None
+    
+    # 1. Maximize cache hits by mapping detailed inputs to normalized keys
+    input_map = {}
+    for original in team_names:
+        norm = normalize_key(original)
+        if norm:
+            if norm not in input_map:
+                input_map[norm] = []
+            input_map[norm].append(original)
+    
+    unique_norms = list(input_map.keys())
+    if not unique_norms:
+        return {}
+
+    found_ids = {} # norm -> team_id
+    
+    # Chunking to prevent SQLite limit errors
+    for chunk in _chunk_list(unique_norms, 50):
+        # 2. Check Aliases (Bulk)
+        if not chunk: continue
+        
+        placeholders = ','.join('?' * len(chunk))
+        cursor = conn.execute(f"SELECT alias, team_id FROM team_aliases WHERE alias IN ({placeholders})", chunk)
+        for row in cursor:
+            found_ids[row[0]] = row[1]
+            
+        # 3. Check Main Table (Exact Match) for remaining
+        remaining = [n for n in chunk if n not in found_ids]
+        if remaining:
+            placeholders = ','.join('?' * len(remaining))
+            # Check name, nickname, abbreviation
+            query = f"""
+                SELECT id, name, nickname, abbreviation FROM teams 
+                WHERE name COLLATE NOCASE IN ({placeholders})
+                OR nickname COLLATE NOCASE IN ({placeholders})
+                OR abbreviation COLLATE NOCASE IN ({placeholders})
+            """
+            cursor = conn.execute(query, remaining * 3)
+            
+            for row in cursor:
+                tid = row[0]
+                # Map back to all matching inputs
+                matches = [row[1], row[2], row[3]] # name, nick, abbrev
+                for m in matches:
+                    if not m: continue
+                    norm_m = normalize_key(m)
+                    if norm_m in remaining: # Simplification: direct match
+                        found_ids[norm_m] = tid
+                    
+                    # Also check if user input matches via case-insensitive logic we just did
+                    for r in remaining:
+                        if r == norm_m:
+                            found_ids[r] = tid
+
+        # 4. Check Prefix (Fallback) - Only for longer strings
+        still_missing = [n for n in chunk if n not in found_ids and len(n) > 2]
+        if still_missing:
+             or_clauses = []
+             params = []
+             for m in still_missing:
+                 # Perform Prefix match
+                 or_clauses.append("(name LIKE ? OR nickname LIKE ?)")
+                 params.extend([f"{m}%", f"{m}%"])
+             
+             if or_clauses:
+                 clause_str = " OR ".join(or_clauses)
+                 query = f"SELECT id, name, nickname FROM teams WHERE {clause_str}"
+                 cursor = conn.execute(query, params)
+                 
+                 for row in cursor:
+                     tid, name, nick = row[0], row[1], row[2]
+                     norm_name = normalize_key(name)
+                     norm_nick = normalize_key(nick)
+                     
+                     for m in still_missing:
+                         if norm_name.startswith(m) or (norm_nick and norm_nick.startswith(m)):
+                             found_ids[m] = tid
+
+    # Fetch Data for all unique matching IDs
+    unique_team_ids = list(set(found_ids.values()))
+    team_data_map = {}
+    
+    if unique_team_ids:
+        placeholders = ','.join('?' * len(unique_team_ids))
+        query = f"""
+            SELECT t.id, t.name, t.abbreviation, t.city, t.mascot, t.nickname,
+                   l.name as league_name, s.name as sport_name, t.league_id
+            FROM teams t
+            LEFT JOIN leagues l ON t.league_id = l.id
+            LEFT JOIN sports s ON t.sport_id = s.id
+            WHERE t.id IN ({placeholders})
+        """
+        params = list(unique_team_ids)
+        if normalized_sport:
+            query += " AND LOWER(s.name) = ?"
+            params.append(normalized_sport)
+            
+        cursor = conn.execute(query, params)
+        rows = cursor.fetchall()
+        
+        # Batch fetch players for these teams
+        found_tids_actual = [row["id"] for row in rows]
+        players_by_team = {}
+        
+        if found_tids_actual:
+            p_placeholders = ','.join('?' * len(found_tids_actual))
+            p_query = f"""
+                SELECT p.id, p.name, p.first_name, p.last_name, p.position, 
+                       p.number, p.age, p.height, p.weight, p.team_id
+                FROM players p
+                WHERE p.team_id IN ({p_placeholders})
+                ORDER BY p.name
+            """
+            cursor = conn.execute(p_query, found_tids_actual)
+            for p in cursor:
+                tid = p["team_id"]
+                if tid not in players_by_team:
+                    players_by_team[tid] = []
+                players_by_team[tid].append(dict(p))
+
+        # Build Team Objects
+        for row in rows:
+            tid = row["id"]
+            team_obj = {
+                "id": tid,
+                "normalized_name": row["name"],
+                "abbreviation": row["abbreviation"],
+                "city": row["city"],
+                "mascot": row["mascot"],
+                "nickname": row["nickname"],
+                "league": row["league_name"],
+                "sport": row["sport_name"],
+                "players": players_by_team.get(tid, []),
+                "player_count": len(players_by_team.get(tid, []))
+            }
+            team_data_map[tid] = team_obj
+
+    # Map results back to original inputs
+    for norm in unique_norms:
+        # Default to None
+        res_data = None
+        if norm in found_ids:
+            tid = found_ids[norm]
+            if tid in team_data_map:
+                res_data = team_data_map[tid]
+        
+        # Assign to all original keys that mapped to this norm
+        for original in input_map[norm]:
+            if res_data:
+                final_obj = res_data.copy()
+                final_obj["type"] = "team"
+                final_obj["query"] = original
+                results[original] = final_obj
+            else:
+                results[original] = None
+                
+    return results
+
+
+def _resolve_batch_players(conn: sqlite3.Connection, player_names: List[str]) -> Dict[str, Any]:
+    """Batch resolve players using optimized set-based queries"""
+    results = {}
+    input_map = {}
+    for original in player_names:
+        norm = normalize_key(original)
+        if norm:
+            if norm not in input_map:
+                input_map[norm] = []
+            input_map[norm].append(original)
+            
+    unique_norms = list(input_map.keys())
+    if not unique_norms:
+        return {}
+
+    found_ids = {}
+    
+    for chunk in _chunk_list(unique_norms, 50):
+        # 1. Check Aliases
+        placeholders = ','.join('?' * len(chunk))
+        cursor = conn.execute(f"SELECT alias, player_id FROM player_aliases WHERE alias IN ({placeholders})", chunk)
+        for row in cursor:
+            found_ids[row[0]] = row[1]
+            
+        # 2. Check Main Table
+        remaining = [n for n in chunk if n not in found_ids]
+        if remaining:
+            placeholders = ','.join('?' * len(remaining))
+            cursor = conn.execute(f"SELECT id, name FROM players WHERE name COLLATE NOCASE IN ({placeholders})", remaining)
+            for row in cursor:
+                # Map logic
+                norm_name = normalize_key(row[1])
+                for r in remaining:
+                    if r == norm_name:
+                        found_ids[r] = row[0]
+                        
+        # 3. Filter Prefix
+        still_missing = [n for n in chunk if n not in found_ids and len(n) > 2]
+        if still_missing:
+             or_clauses = ["(name LIKE ? OR first_name LIKE ? OR last_name LIKE ?)"] * len(still_missing)
+             params = []
+             for m in still_missing:
+                 params.extend([f"{m}%", f"{m}%", f"{m}%"])
+             
+             query = f"SELECT id, name, first_name, last_name FROM players WHERE {' OR '.join(or_clauses)}"
+             cursor = conn.execute(query, params)
+             for row in cursor:
+                 pid = row[0]
+                 norm_name = normalize_key(row[1])
+                 norm_first = normalize_key(row[2]) if row[2] else ""
+                 norm_last = normalize_key(row[3]) if row[3] else ""
+                 
+                 for m in still_missing:
+                     if norm_name.startswith(m) or norm_first.startswith(m) or norm_last.startswith(m):
+                         found_ids[m] = pid
+                         
+    # Fetch Data
+    unique_pids = list(set(found_ids.values()))
+    player_data_map = {}
+    
+    if unique_pids:
+        placeholders = ','.join('?' * len(unique_pids))
+        query = f"""
+            SELECT p.id, p.name, p.first_name, p.last_name, p.position, p.number,
+                   p.age, p.height, p.weight,
+                   t.name as team_name, l.name as league_name, s.name as sport_name
+            FROM players p
+            LEFT JOIN teams t ON p.team_id = t.id
+            LEFT JOIN leagues l ON p.league_id = l.id
+            LEFT JOIN sports s ON p.sport_id = s.id
+            WHERE p.id IN ({placeholders})
+        """
+        cursor = conn.execute(query, unique_pids)
+        for result in cursor:
+            pid = result["id"]
+            player_obj = {
+                "id": pid,
+                "normalized_name": result["name"],
+                "first_name": result["first_name"],
+                "last_name": result["last_name"],
+                "position": result["position"],
+                "number": result["number"],
+                "age": result["age"],
+                "height": result["height"],
+                "weight": result["weight"],
+                "team": result["team_name"],
+                "league": result["league_name"],
+                "sport": result["sport_name"]
+            }
+            player_data_map[pid] = player_obj
+
+    # Map back
+    for norm in unique_norms:
+        res_data = None
+        if norm in found_ids and found_ids[norm] in player_data_map:
+            res_data = player_data_map[found_ids[norm]]
+            
+        for original in input_map[norm]:
+            if res_data:
+                final_obj = res_data.copy()
+                final_obj["type"] = "player"
+                final_obj["query"] = original
+                results[original] = final_obj
+            else:
+                results[original] = None
+                
+    return results
+
+
+def _resolve_bulk_markets(conn: sqlite3.Connection, market_names: List[str]) -> Dict[str, Any]:
+    """Bulk resolve markets by loading all markets in memory (small dataset)"""
+    results = {}
+    
+    # Load ALL markets (ID, name)
+    # This is much faster than 50 LIKE queries
+    conn.execute("SELECT id, name FROM markets")
+    all_markets = conn.fetchall() # List of Row
+    
+    # Create helper maps
+    # 1. Exact Name Map
+    # 2. Stripped Name Map
+    exact_map = {m["name"].lower(): m["id"] for m in all_markets}
+    stripped_map = {m["name"].lower().replace(" ", "").replace("_", ""): m["id"] for m in all_markets}
+    
+    # 3. Check alias table
+    conn.execute("SELECT alias, market_id FROM market_aliases")
+    alias_rows = conn.fetchall()
+    alias_map = {row["alias"].lower().replace(" ", "").replace("_", ""): row["market_id"] for row in alias_rows}
+    
+    # Process inputs
+    found_ids = {} # original -> id
+    
+    for original in market_names:
+        norm = original.lower().strip()
+        stripped = norm.replace(" ", "").replace("_", "")
+        
+        mid = None
+        
+        # 1. Alias Check
+        if stripped in alias_map:
+            mid = alias_map[stripped]
+        
+        # 2. Exact/Stripped Check in Main
+        if not mid:
+            if norm in exact_map:
+                mid = exact_map[norm]
+            elif stripped in stripped_map:
+                mid = stripped_map[stripped]
+                
+        # 3. Fuzzy Check (Prefix) - In Memory
+        if not mid:
+            # simple linear scan is fast for < 1000 items
+            for m in all_markets:
+                m_name = m["name"].lower()
+                if m_name.startswith(norm):
+                    mid = m["id"]
+                    break
+                    
+        if mid:
+            found_ids[original] = mid
+            
+    # Fetch details for found IDs
+    unique_mids = list(set(found_ids.values()))
+    market_data_map = {}
+    
+    if unique_mids:
+        placeholders = ','.join('?' * len(unique_mids))
+        cursor = conn.execute(f"SELECT id, name, market_type_id FROM markets WHERE id IN ({placeholders})", unique_mids)
+        rows = cursor.fetchall()
+        
+        # Fetch sports for these markets
+        # ONE-TO-MANY (Market -> Sports)
+        # SELECT market_id, sport_name ...
+        # Join optimization
+        cursor = conn.execute(f"""
+            SELECT ms.market_id, s.name 
+            FROM market_sports ms 
+            JOIN sports s ON ms.sport_id = s.id 
+            WHERE ms.market_id IN ({placeholders})
+        """, unique_mids)
+        sports_map = {}
+        for row in cursor:
+            mid = row[0]
+            sname = row[1]
+            if mid not in sports_map:
+                sports_map[mid] = []
+            sports_map[mid].append(sname)
+            
+        for row in rows:
+            mid = row["id"]
+            market_data_map[mid] = {
+                "type": "market",
+                "normalized_name": row["name"],
+                "market_type_id": row["market_type_id"],
+                "sports": sports_map.get(mid, [])
+            }
+            
+    # Map back
+    for original in market_names:
+        if original in found_ids and found_ids[original] in market_data_map:
+            res = market_data_map[found_ids[original]].copy()
+            res["query"] = original
+            results[original] = res
+        else:
+            results[original] = None
+            
+    return results
+
+
 def get_batch_cache_entries(
     teams: Optional[List[str]] = None,
     players: Optional[List[str]] = None,
@@ -790,54 +1164,89 @@ def get_batch_cache_entries(
 ) -> Dict[str, Dict[str, Any]]:
     """
     Batch query for multiple items across categories.
-    OPTIMIZED: Uses a single shared DB connection and sequential processing for low overhead.
+    OPTIMIZED: Uses specialized set-based SQL queries for extreme performance.
     """
     result = {}
-    
-    # Pre-initialize result structure
     if teams: result["team"] = {}
     if players: result["player"] = {}
     if markets: result["market"] = {}
     if leagues: result["league"] = {}
 
-    # Open ONE connection for the entire batch
-    conn = get_db_connection()
+    # 1. Check Redis for all items first (Fastest)
+    # Lists to process via DB
+    miss_teams = []
+    miss_players = []
+    miss_markets = []
+    miss_leagues = [] # Leagues implementation optional/omitted for brevity if needed, but best to do
     
-    try:
-        # Process teams
-        if teams:
-            for team_name in teams:
-                # Redis check handles inside get_cache_entry, but connection is reused for DB part
-                result["team"][team_name] = get_cache_entry(
-                    team=team_name, sport=sport, active_connection=conn
-                )
-        
-        # Process players
-        if players:
-            for player_name in players:
-                result["player"][player_name] = get_cache_entry(
-                    player=player_name, active_connection=conn
-                )
-        
-        # Process markets
-        if markets:
-            for market_name in markets:
-                result["market"][market_name] = get_cache_entry(
-                    market=market_name, active_connection=conn
-                )
-        
-        # Process leagues
-        if leagues:
-            for league_name in leagues:
-                result["league"][league_name] = get_cache_entry(
-                    league=league_name, sport=sport, active_connection=conn
-                )
+    if teams:
+        for t in teams:
+            cached = get_cached_data(team=t, sport=sport)
+            if cached:
+                result["team"][t] = cached
+            else:
+                miss_teams.append(t)
                 
+    if players:
+        for p in players:
+            cached = get_cached_data(player=p)
+            if cached:
+                result["player"][p] = cached
+            else:
+                miss_players.append(p)
+                
+    if markets:
+        for m in markets:
+            cached = get_cached_data(market=m)
+            if cached:
+                result["market"][m] = cached
+            else:
+                miss_markets.append(m)
+                
+    # Leagues - loop fallback for now as it wasn't the main bottleneck
+    # (But better to batch if possible. Let's stick to loop for legacy for now to save tokens/time, or just accept the tiny overhead?)
+    # The user issue is "Missing Data" payloads which have teams/players/markets.
+    # Leagues usually match or don't, and are few.
+    
+    # 2. Bulk DB Resolve for Misses
+    conn = get_db_connection()
+    try:
+        if miss_teams:
+            team_results = _resolve_batch_teams(conn, miss_teams, sport)
+            for t, data in team_results.items():
+                result["team"][t] = data
+                if data:
+                    set_cached_data(data, team=t, sport=sport)
+
+        if miss_players:
+            player_results = _resolve_batch_players(conn, miss_players)
+            for p, data in player_results.items():
+                result["player"][p] = data
+                if data:
+                    set_cached_data(data, player=p)
+
+        if miss_markets:
+            market_results = _resolve_bulk_markets(conn, miss_markets)
+            for m, data in market_results.items():
+                result["market"][m] = data
+                if data:
+                    set_cached_data(data, market=m)
+        
+        # Legacy loop for Leagues (unless critical)
+        if leagues:
+            for l in leagues:
+                # Check Redis
+                cached = get_cached_data(league=l, sport=sport)
+                if cached:
+                     result["league"][l] = cached
+                else:
+                    # DB
+                    entry = get_cache_entry(league=l, sport=sport, active_connection=conn)
+                    result["league"][l] = entry
+                    # save cache done inside get_cache_entry
+                    
     except Exception as e:
-        print(f"Batch processing error: {e}")
-        # Make sure we don't leave partial results/crash completely
-        # (Though dict updates typically persist until error)
-        pass
+        print(f"Batch Error: {e}")
     finally:
         conn.close()
     
