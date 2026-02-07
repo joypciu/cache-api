@@ -89,7 +89,8 @@ def get_cache_entry(
     team: Optional[str] = None,
     player: Optional[str] = None,
     sport: Optional[str] = None,
-    league: Optional[str] = None
+    league: Optional[str] = None,
+    active_connection: Optional[sqlite3.Connection] = None
 ) -> Optional[Dict[str, Any]]:
     """
     Retrieve cache entry based on provided parameters.
@@ -102,10 +103,11 @@ def get_cache_entry(
     
     Args:
         market: Market type to look up
-        team: Team name to look up (returns team with all its players)
-        player: Player name to look up (returns player with their one team)
-        sport: Sport name (required when searching by team)
-        league: League name to look up (returns league with all its teams)
+        team: Team name to look up
+        player: Player name to look up
+        sport: Sport name
+        league: League name
+        active_connection: Optional existing DB connection to reuse (optimization for batch queries)
     
     Returns:
         Dictionary with cache entry data or None if not found
@@ -117,7 +119,13 @@ def get_cache_entry(
         return cached_result
     
     # Cache miss - query database
-    conn = get_db_connection()
+    if active_connection:
+        conn = active_connection
+        should_close = False
+    else:
+        conn = get_db_connection()
+        should_close = True
+        
     cursor = conn.cursor()
     
     try:
@@ -715,7 +723,9 @@ def get_cache_entry(
         return None
         
     finally:
-        conn.close()
+        cursor.close()
+        if should_close:
+            conn.close()
 
 
 def get_all_teams() -> List[Dict[str, Any]]:
@@ -780,69 +790,56 @@ def get_batch_cache_entries(
 ) -> Dict[str, Dict[str, Any]]:
     """
     Batch query for multiple items across categories.
-    Each item is searched independently within its category.
-    Uses parallel processing for improved performance.
-    
-    Args:
-        teams: List of team names to look up
-        players: List of player names to look up
-        markets: List of market types to look up
-        sport: Sport context for team/league queries
-        leagues: List of league names to look up
-    
-    Returns:
-        Dictionary with categories containing item results:
-        {
-            "team": {"Lakers": {...}, "Warriors": null},
-            "player": {"LeBron": {...}},
-            "market": {"moneyline": {...}},
-            "league": {"NBA": {...}}
-        }
+    OPTIMIZED: Uses a single shared DB connection and sequential processing for low overhead.
     """
     result = {}
     
-    # Reduced max_workers to prevent CPU thrashing on 50% quota VPS
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {}
-        
-        # Submit all team queries
+    # Pre-initialize result structure
+    if teams: result["team"] = {}
+    if players: result["player"] = {}
+    if markets: result["market"] = {}
+    if leagues: result["league"] = {}
 
+    # Open ONE connection for the entire batch
+    conn = get_db_connection()
+    
+    try:
+        # Process teams
         if teams:
-            result["team"] = {}
             for team_name in teams:
-                future = executor.submit(get_cache_entry, team=team_name, sport=sport)
-                futures[future] = ("team", team_name)
+                # Redis check handles inside get_cache_entry, but connection is reused for DB part
+                result["team"][team_name] = get_cache_entry(
+                    team=team_name, sport=sport, active_connection=conn
+                )
         
-        # Submit all player queries
+        # Process players
         if players:
-            result["player"] = {}
             for player_name in players:
-                future = executor.submit(get_cache_entry, player=player_name)
-                futures[future] = ("player", player_name)
+                result["player"][player_name] = get_cache_entry(
+                    player=player_name, active_connection=conn
+                )
         
-        # Submit all market queries
+        # Process markets
         if markets:
-            result["market"] = {}
             for market_name in markets:
-                future = executor.submit(get_cache_entry, market=market_name)
-                futures[future] = ("market", market_name)
+                result["market"][market_name] = get_cache_entry(
+                    market=market_name, active_connection=conn
+                )
         
-        # Submit all league queries
+        # Process leagues
         if leagues:
-            result["league"] = {}
             for league_name in leagues:
-                future = executor.submit(get_cache_entry, league=league_name, sport=sport)
-                futures[future] = ("league", league_name)
-        
-        # Collect results as they complete
-        for future in as_completed(futures):
-            category, name = futures[future]
-            try:
-                entry = future.result()
-                result[category][name] = entry
-            except Exception as e:
-                # Handle errors gracefully
-                result[category][name] = None
+                result["league"][league_name] = get_cache_entry(
+                    league=league_name, sport=sport, active_connection=conn
+                )
+                
+    except Exception as e:
+        print(f"Batch processing error: {e}")
+        # Make sure we don't leave partial results/crash completely
+        # (Though dict updates typically persist until error)
+        pass
+    finally:
+        conn.close()
     
     return result
 
@@ -850,32 +847,15 @@ def get_batch_cache_entries(
 def get_precision_batch_cache_entries(queries: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Precision batch query where each query can combine multiple parameters.
-    Uses parallel processing for improved performance.
-    
-    Args:
-        queries: List of query dictionaries, each with optional parameters:
-                 team, player, market, sport, league
-    
-    Returns:
-        Dictionary with results array and statistics:
-        {
-            "results": [
-                {"query": {...}, "found": true, "data": {...}},
-                {"query": {...}, "found": false, "data": null}
-            ],
-            "total_queries": 5,
-            "successful": 3,
-            "failed": 2
-        }
+    OPTIMIZED: Uses a single shared DB connection and sequential processing.
     """
-    results = []
+    results_list = []
     successful = 0
     failed = 0
     
-    # Reduced max_workers to prevent CPU thrashing on 50% quota VPS
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {}
-        
+    conn = get_db_connection()
+    
+    try:
         for idx, query_item in enumerate(queries):
             # Convert Pydantic model to dict if needed
             if hasattr(query_item, 'model_dump'):
@@ -885,53 +865,42 @@ def get_precision_batch_cache_entries(queries: List[Dict[str, Any]]) -> Dict[str
             else:
                 query_dict = query_item
             
-            # Submit query to executor
-            future = executor.submit(
-                get_cache_entry,
-                team=query_dict.get("team"),
-                player=query_dict.get("player"),
-                market=query_dict.get("market"),
-                sport=query_dict.get("sport"),
-                league=query_dict.get("league")
-            )
-            futures[future] = (idx, query_dict)
-        
-        # Collect results in order
-        results_dict = {}
-        for future in as_completed(futures):
-            idx, query_dict = futures[future]
             try:
-                entry = future.result()
-                if entry:
-                    results_dict[idx] = {
-                        "query": query_dict,
-                        "found": True,
-                        "data": entry
-                    }
+                entry = get_cache_entry(
+                    team=query_dict.get("team"),
+                    player=query_dict.get("player"),
+                    market=query_dict.get("market"),
+                    sport=query_dict.get("sport"),
+                    league=query_dict.get("league"),
+                    active_connection=conn
+                )
+                
+                found = entry is not None
+                if found:
+                    successful += 1
                 else:
-                    results_dict[idx] = {
-                        "query": query_dict,
-                        "found": False,
-                        "data": None
-                    }
+                    failed += 1
+                    
+                results_list.append({
+                    "query": query_dict,
+                    "found": found,
+                    "data": entry
+                })
+                
             except Exception as e:
-                results_dict[idx] = {
+                failed += 1
+                results_list.append({
                     "query": query_dict,
                     "found": False,
-                    "data": None
-                }
-        
-        # Sort results by original order
-        for idx in sorted(results_dict.keys()):
-            result = results_dict[idx]
-            results.append(result)
-            if result["found"]:
-                successful += 1
-            else:
-                failed += 1
+                    "data": None,
+                    "error": str(e)
+                })
+                
+    finally:
+        conn.close()
     
     return {
-        "results": results,
+        "results": results_list,
         "total_queries": len(queries),
         "successful": successful,
         "failed": failed
