@@ -801,12 +801,12 @@ def get_batch_cache_entries(
     """
     result = {}
     
-    # Use ThreadPoolExecutor for parallel queries with more workers
-    # Increased from 10 to 20 for better parallelization
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    # Reduced max_workers to prevent CPU thrashing on 50% quota VPS
+    with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {}
         
         # Submit all team queries
+
         if teams:
             result["team"] = {}
             for team_name in teams:
@@ -872,9 +872,8 @@ def get_precision_batch_cache_entries(queries: List[Dict[str, Any]]) -> Dict[str
     successful = 0
     failed = 0
     
-    # Use ThreadPoolExecutor for parallel queries with more workers
-    # Increased from 10 to 20 for better parallelization
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    # Reduced max_workers to prevent CPU thrashing on 50% quota VPS
+    with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {}
         
         for idx, query_item in enumerate(queries):
