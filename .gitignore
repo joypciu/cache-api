@@ -85,6 +85,7 @@ logs/
 # Ignore SQLite files except the main database
 *.sqlite
 *.sqlite3
+*.db
 # Allow sports_data.db to be tracked
 !sports_data.db
 
