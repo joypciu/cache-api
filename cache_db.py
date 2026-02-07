@@ -144,12 +144,21 @@ def get_cache_entry(
             player_ids_from_main = [row[0] for row in cursor.fetchall()]
 
             if not player_ids_from_main and len(normalized_player) > 2:
-                # Fallback to slower partial match
+                # Fallback to slower partial match - Try prefix first (Index Friendly)
                 cursor.execute("""
                     SELECT DISTINCT id FROM players
-                    WHERE LOWER(name) LIKE ? OR LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ?
-                """, (f"%{normalized_player}%", f"%{normalized_player}%", f"%{normalized_player}%"))
+                    WHERE name LIKE ? OR first_name LIKE ? OR last_name LIKE ?
+                """, (f"{normalized_player}%", f"{normalized_player}%", f"{normalized_player}%"))
                 player_ids_from_main = [row[0] for row in cursor.fetchall()]
+
+                # If still not found, try full containment (scan) but only for longer strings
+                if not player_ids_from_main and len(normalized_player) > 3:
+                     cursor.execute("""
+                        SELECT DISTINCT id FROM players
+                        WHERE name LIKE ? OR first_name LIKE ? OR last_name LIKE ?
+                    """, (f"%{normalized_player}%", f"%{normalized_player}%", f"%{normalized_player}%"))
+                     player_ids_from_main = [row[0] for row in cursor.fetchall()]
+
             
             player_ids = list(set(player_ids_from_aliases + player_ids_from_main))
             
@@ -314,21 +323,38 @@ def get_cache_entry(
             # For short strings, SKIP fuzzy search to prevent performance kill (LIKE '%a%' matches everything)
             if not team_ids_from_main and len(normalized_team) > 2:
                 if normalized_sport:
+                    # Try prefix match first (Index Friendly)
                     cursor.execute("""
                         SELECT DISTINCT t.id FROM teams t
                         LEFT JOIN sports s ON t.sport_id = s.id
-                        WHERE (LOWER(t.name) LIKE ? OR LOWER(t.nickname) LIKE ? OR LOWER(t.abbreviation) = ?)
+                        WHERE (t.name LIKE ? OR t.nickname LIKE ? OR t.abbreviation = ?)
                           AND LOWER(s.name) = ?
-                    """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team, normalized_sport))
+                    """, (f"{normalized_team}%", f"{normalized_team}%", normalized_team, normalized_sport))
+                    team_ids_from_main = [row[0] for row in cursor.fetchall()]
+                    
+                    if not team_ids_from_main and len(normalized_team) > 3:
+                         cursor.execute("""
+                            SELECT DISTINCT t.id FROM teams t
+                            LEFT JOIN sports s ON t.sport_id = s.id
+                            WHERE (t.name LIKE ? OR t.nickname LIKE ? OR t.abbreviation = ?)
+                              AND LOWER(s.name) = ?
+                        """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team, normalized_sport))
+                         team_ids_from_main = [row[0] for row in cursor.fetchall()]
+
                 else:
+                    # Try prefix match first (Index Friendly)
                     cursor.execute("""
                         SELECT DISTINCT id FROM teams
-                        WHERE LOWER(name) LIKE ? OR LOWER(nickname) LIKE ? OR LOWER(abbreviation) = ?
-                    """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team))
-            
-                team_ids_from_main = [row[0] for row in cursor.fetchall()]
-            
-            # Combine and deduplicate team IDs
+                        WHERE name LIKE ? OR nickname LIKE ? OR abbreviation = ?
+                    """, (f"{normalized_team}%", f"{normalized_team}%", normalized_team))
+                    team_ids_from_main = [row[0] for row in cursor.fetchall()]
+
+                    if not team_ids_from_main and len(normalized_team) > 3:
+                        cursor.execute("""
+                            SELECT DISTINCT id FROM teams
+                            WHERE name LIKE ? OR nickname LIKE ? OR abbreviation = ?
+                        """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team))
+                        team_ids_from_main = [row[0] for row in cursor.fetchall()]
             team_ids = list(set(team_ids_from_aliases + team_ids_from_main))
             
             if not team_ids:
@@ -633,15 +659,25 @@ def get_cache_entry(
                     # We normalize the input first to ensure good matching
                     normalized_input = market.lower().strip()
                     
-                    # Search 2a: Direct fuzzy on input
+                    # Search 2a: Direct fuzzy on input (Prefix first)
                     cursor.execute("""
                         SELECT id FROM markets
-                        WHERE LOWER(name) LIKE ?
+                        WHERE name LIKE ?
                         ORDER BY LENGTH(name) ASC 
                         LIMIT 1
-                    """, (f"%{normalized_input}%",))
+                    """, (f"{normalized_input}%",))
                     fuzzy_result = cursor.fetchone()
                     
+                    if not fuzzy_result and len(normalized_input) > 3:
+                        # Fallback to full wildcard
+                        cursor.execute("""
+                            SELECT id FROM markets
+                            WHERE name LIKE ?
+                            ORDER BY LENGTH(name) ASC 
+                            LIMIT 1
+                        """, (f"%{normalized_input}%",))
+                        fuzzy_result = cursor.fetchone()
+
                     if fuzzy_result:
                          market_id = fuzzy_result[0]
                     else:
@@ -650,17 +686,25 @@ def get_cache_entry(
                         if expanded_input != normalized_input:
                             cursor.execute("""
                                 SELECT id FROM markets
-                                WHERE LOWER(name) LIKE ?
+                                WHERE name LIKE ?
                                 ORDER BY LENGTH(name) ASC
                                 LIMIT 1
-                            """, (f"%{expanded_input}%",))
+                            """, (f"{expanded_input}%",))
                             expanded_result = cursor.fetchone()
+                            
+                            if not expanded_result and len(expanded_input) > 3:
+                                cursor.execute("""
+                                    SELECT id FROM markets
+                                    WHERE name LIKE ?
+                                    ORDER BY LENGTH(name) ASC
+                                    LIMIT 1
+                                """, (f"%{expanded_input}%",))
+                                expanded_result = cursor.fetchone()
+
                             if expanded_result:
                                 market_id = expanded_result[0]
                             else:
                                 return None
-                        else:
-                            return None
             
             # Search for market by resolved ID
             cursor.execute("""
