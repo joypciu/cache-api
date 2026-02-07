@@ -151,13 +151,10 @@ def get_cache_entry(
                 """, (f"{normalized_player}%", f"{normalized_player}%", f"{normalized_player}%"))
                 player_ids_from_main = [row[0] for row in cursor.fetchall()]
 
-                # If still not found, try full containment (scan) but only for longer strings
-                if not player_ids_from_main and len(normalized_player) > 3:
-                     cursor.execute("""
-                        SELECT DISTINCT id FROM players
-                        WHERE name LIKE ? OR first_name LIKE ? OR last_name LIKE ?
-                    """, (f"%{normalized_player}%", f"%{normalized_player}%", f"%{normalized_player}%"))
-                     player_ids_from_main = [row[0] for row in cursor.fetchall()]
+                # STRICT PERFORMANCE MODE: Disabled full wildcard scan for players
+                # Only prefix matching is allowed to prevent DB lockups during batch processing.
+                # If specific fuzzy matching is needed, use a dedicated search endpoint or search service.
+
 
             
             player_ids = list(set(player_ids_from_aliases + player_ids_from_main))
@@ -332,15 +329,8 @@ def get_cache_entry(
                     """, (f"{normalized_team}%", f"{normalized_team}%", normalized_team, normalized_sport))
                     team_ids_from_main = [row[0] for row in cursor.fetchall()]
                     
-                    if not team_ids_from_main and len(normalized_team) > 3:
-                         cursor.execute("""
-                            SELECT DISTINCT t.id FROM teams t
-                            LEFT JOIN sports s ON t.sport_id = s.id
-                            WHERE (t.name LIKE ? OR t.nickname LIKE ? OR t.abbreviation = ?)
-                              AND LOWER(s.name) = ?
-                        """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team, normalized_sport))
-                         team_ids_from_main = [row[0] for row in cursor.fetchall()]
-
+                    # STRICT PERFORMANCE MODE: Disabled full wildcard scan for teams
+                    
                 else:
                     # Try prefix match first (Index Friendly)
                     cursor.execute("""
@@ -349,12 +339,8 @@ def get_cache_entry(
                     """, (f"{normalized_team}%", f"{normalized_team}%", normalized_team))
                     team_ids_from_main = [row[0] for row in cursor.fetchall()]
 
-                    if not team_ids_from_main and len(normalized_team) > 3:
-                        cursor.execute("""
-                            SELECT DISTINCT id FROM teams
-                            WHERE name LIKE ? OR nickname LIKE ? OR abbreviation = ?
-                        """, (f"%{normalized_team}%", f"%{normalized_team}%", normalized_team))
-                        team_ids_from_main = [row[0] for row in cursor.fetchall()]
+                    # STRICT PERFORMANCE MODE: Disabled full wildcard scan for teams
+
             team_ids = list(set(team_ids_from_aliases + team_ids_from_main))
             
             if not team_ids:
