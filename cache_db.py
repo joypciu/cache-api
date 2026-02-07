@@ -655,14 +655,8 @@ def get_cache_entry(
                     fuzzy_result = cursor.fetchone()
                     
                     if not fuzzy_result and len(normalized_input) > 3:
-                        # Fallback to full wildcard
-                        cursor.execute("""
-                            SELECT id FROM markets
-                            WHERE name LIKE ?
-                            ORDER BY LENGTH(name) ASC 
-                            LIMIT 1
-                        """, (f"%{normalized_input}%",))
-                        fuzzy_result = cursor.fetchone()
+                        # STRICT PERFORMANCE MODE: Disabled full wildcard scan for markets
+                        pass
 
                     if fuzzy_result:
                          market_id = fuzzy_result[0]
@@ -679,13 +673,8 @@ def get_cache_entry(
                             expanded_result = cursor.fetchone()
                             
                             if not expanded_result and len(expanded_input) > 3:
-                                cursor.execute("""
-                                    SELECT id FROM markets
-                                    WHERE name LIKE ?
-                                    ORDER BY LENGTH(name) ASC
-                                    LIMIT 1
-                                """, (f"%{expanded_input}%",))
-                                expanded_result = cursor.fetchone()
+                                # STRICT PERFORMANCE MODE: Disabled full wildcard scan for markets
+                                pass
 
                             if expanded_result:
                                 market_id = expanded_result[0]
