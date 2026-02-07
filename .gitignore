@@ -105,3 +105,14 @@ uuid_tracking.db
 # ignore md files
 final_report.md
 final_report.pdf
+
+# ignore old database
+sports_data_old.db
+
+# igonore all files named with "verify"
+*verify*
+*verify*.py
+verify_*.py
+verify_*.ipynb
+verify*.ipynb
+verify_failures_production.py
