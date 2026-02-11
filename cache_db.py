@@ -7,6 +7,7 @@ import sqlite3
 import os
 import time
 from typing import Optional, Dict, Any, List
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from redis_cache import get_cached_data, set_cached_data
 
@@ -801,7 +802,7 @@ def _resolve_batch_teams(conn: sqlite3.Connection, team_names: List[str], sport:
     if not unique_norms:
         return {}
 
-    found_ids = {} # norm -> team_id
+    found_ids = defaultdict(set) # norm -> set of team_ids
     
     # Chunking to prevent SQLite limit errors
     for chunk in _chunk_list(unique_norms, 50):
@@ -811,62 +812,70 @@ def _resolve_batch_teams(conn: sqlite3.Connection, team_names: List[str], sport:
         placeholders = ','.join('?' * len(chunk))
         cursor = conn.execute(f"SELECT alias, team_id FROM team_aliases WHERE alias IN ({placeholders})", chunk)
         for row in cursor:
-            found_ids[row[0]] = row[1]
+            found_ids[row[0]].add(row[1])
             
-        # 3. Check Main Table (Exact Match) for remaining
-        remaining = [n for n in chunk if n not in found_ids]
-        if remaining:
-            placeholders = ','.join('?' * len(remaining))
-            # Check name, nickname, abbreviation
-            query = f"""
-                SELECT id, name, nickname, abbreviation FROM teams 
-                WHERE name COLLATE NOCASE IN ({placeholders})
-                OR nickname COLLATE NOCASE IN ({placeholders})
-                OR abbreviation COLLATE NOCASE IN ({placeholders})
-            """
-            cursor = conn.execute(query, remaining * 3)
-            
-            for row in cursor:
-                tid = row[0]
-                # Map back to all matching inputs
-                matches = [row[1], row[2], row[3]] # name, nick, abbrev
-                for m in matches:
-                    if not m: continue
-                    norm_m = normalize_key(m)
-                    if norm_m in remaining: # Simplification: direct match
-                        found_ids[norm_m] = tid
+        # 3. Check Main Table (Exact Match)
+        # We search ALL items in chunk, not just remaining, to find all possible matches
+        placeholders = ','.join('?' * len(chunk))
+        # Check name, nickname, abbreviation
+        query = f"""
+            SELECT id, name, nickname, abbreviation FROM teams 
+            WHERE name COLLATE NOCASE IN ({placeholders})
+            OR nickname COLLATE NOCASE IN ({placeholders})
+            OR abbreviation COLLATE NOCASE IN ({placeholders})
+        """
+        cursor = conn.execute(query, chunk * 3)
+        
+        for row in cursor:
+            tid = row[0]
+            # Map back to all matching inputs
+            matches = [row[1], row[2], row[3]] # name, nick, abbrev
+            for m in matches:
+                if not m: continue
+                norm_m = normalize_key(m)
+                
+                # Direct match check
+                if norm_m in chunk:
+                    found_ids[norm_m].add(tid)
                     
-                    # Also check if user input matches via case-insensitive logic we just did
-                    for r in remaining:
-                        if r == norm_m:
-                            found_ids[r] = tid
+                # Double check against chunk keys
+                for r in chunk:
+                    if r == norm_m:
+                        found_ids[r].add(tid)
 
-        # 4. Check Prefix (Fallback) - Only for longer strings
-        still_missing = [n for n in chunk if n not in found_ids and len(n) > 2]
-        if still_missing:
+        # 4. Check Prefix (Fallback/Expansion) - For longer strings
+        long_keys = [n for n in chunk if len(n) > 2]
+        if long_keys:
              or_clauses = []
              params = []
-             for m in still_missing:
+             for m in long_keys:
                  # Perform Prefix match
-                 or_clauses.append("(name LIKE ? OR nickname LIKE ?)")
-                 params.extend([f"{m}%", f"{m}%"])
+                 or_clauses.append("(name LIKE ? OR nickname LIKE ? OR abbreviation LIKE ?)")
+                 params.extend([f"{m}%", f"{m}%", f"{m}%"])
              
              if or_clauses:
                  clause_str = " OR ".join(or_clauses)
-                 query = f"SELECT id, name, nickname FROM teams WHERE {clause_str}"
+                 query = f"SELECT id, name, nickname, abbreviation FROM teams WHERE {clause_str}"
                  cursor = conn.execute(query, params)
                  
                  for row in cursor:
-                     tid, name, nick = row[0], row[1], row[2]
+                     tid, name, nick, abbr = row[0], row[1], row[2], row[3]
                      norm_name = normalize_key(name)
                      norm_nick = normalize_key(nick)
+                     norm_abbr = normalize_key(abbr) if abbr else ""
                      
-                     for m in still_missing:
-                         if norm_name.startswith(m) or (norm_nick and norm_nick.startswith(m)):
-                             found_ids[m] = tid
+                     for m in long_keys:
+                         if norm_name.startswith(m) or \
+                            (norm_nick and norm_nick.startswith(m)) or \
+                            (norm_abbr and norm_abbr.startswith(m)):
+                             found_ids[m].add(tid)
 
     # Fetch Data for all unique matching IDs
-    unique_team_ids = list(set(found_ids.values()))
+    all_tids = set()
+    for tids in found_ids.values():
+        all_tids.update(tids)
+
+    unique_team_ids = list(all_tids)
     team_data_map = {}
     
     if unique_team_ids:
@@ -926,19 +935,25 @@ def _resolve_batch_teams(conn: sqlite3.Connection, team_names: List[str], sport:
 
     # Map results back to original inputs
     for norm in unique_norms:
-        # Default to None
-        res_data = None
+        # Get list of teams for this norm
+        teams_list = []
         if norm in found_ids:
-            tid = found_ids[norm]
-            if tid in team_data_map:
-                res_data = team_data_map[tid]
+            for tid in found_ids[norm]:
+                if tid in team_data_map:
+                    teams_list.append(team_data_map[tid])
         
+        # Sort teams by league priority
+        teams_list.sort(key=lambda x: (get_league_priority(x.get("league", "")), x.get("normalized_name", "")))
+
         # Assign to all original keys that mapped to this norm
         for original in input_map[norm]:
-            if res_data:
-                final_obj = res_data.copy()
-                final_obj["type"] = "team"
-                final_obj["query"] = original
+            if teams_list:
+                final_obj = {
+                    "type": "team",
+                    "query": original,
+                    "teams": teams_list,
+                    "team_count": len(teams_list)
+                }
                 results[original] = final_obj
             else:
                 results[original] = None
@@ -961,33 +976,36 @@ def _resolve_batch_players(conn: sqlite3.Connection, player_names: List[str]) ->
     if not unique_norms:
         return {}
 
-    found_ids = {}
+    found_ids = defaultdict(set) # norm -> set of ids
     
     for chunk in _chunk_list(unique_norms, 50):
         # 1. Check Aliases
         placeholders = ','.join('?' * len(chunk))
         cursor = conn.execute(f"SELECT alias, player_id FROM player_aliases WHERE alias IN ({placeholders})", chunk)
         for row in cursor:
-            found_ids[row[0]] = row[1]
+            found_ids[row[0]].add(row[1])
             
-        # 2. Check Main Table
-        remaining = [n for n in chunk if n not in found_ids]
-        if remaining:
-            placeholders = ','.join('?' * len(remaining))
-            cursor = conn.execute(f"SELECT id, name FROM players WHERE name COLLATE NOCASE IN ({placeholders})", remaining)
-            for row in cursor:
-                # Map logic
-                norm_name = normalize_key(row[1])
-                for r in remaining:
-                    if r == norm_name:
-                        found_ids[r] = row[0]
+        # 2. Check Main Table (Exact Match)
+        placeholders = ','.join('?' * len(chunk))
+        cursor = conn.execute(f"SELECT id, name FROM players WHERE name COLLATE NOCASE IN ({placeholders})", chunk)
+        for row in cursor:
+            # Map logic
+            pid = row[0]
+            norm_name = normalize_key(row[1])
+            
+            if norm_name in chunk:
+                 found_ids[norm_name].add(pid)
+                 
+            for r in chunk:
+                if r == norm_name:
+                    found_ids[r].add(pid)
                         
-        # 3. Filter Prefix
-        still_missing = [n for n in chunk if n not in found_ids and len(n) > 2]
-        if still_missing:
-             or_clauses = ["(name LIKE ? OR first_name LIKE ? OR last_name LIKE ?)"] * len(still_missing)
+        # 3. Filter Prefix (and partial)
+        long_keys = [n for n in chunk if len(n) > 2]
+        if long_keys:
+             or_clauses = ["(name LIKE ? OR first_name LIKE ? OR last_name LIKE ?)"] * len(long_keys)
              params = []
-             for m in still_missing:
+             for m in long_keys:
                  params.extend([f"{m}%", f"{m}%", f"{m}%"])
              
              query = f"SELECT id, name, first_name, last_name FROM players WHERE {' OR '.join(or_clauses)}"
@@ -998,12 +1016,16 @@ def _resolve_batch_players(conn: sqlite3.Connection, player_names: List[str]) ->
                  norm_first = normalize_key(row[2]) if row[2] else ""
                  norm_last = normalize_key(row[3]) if row[3] else ""
                  
-                 for m in still_missing:
+                 for m in long_keys:
                      if norm_name.startswith(m) or norm_first.startswith(m) or norm_last.startswith(m):
-                         found_ids[m] = pid
+                         found_ids[m].add(pid)
                          
     # Fetch Data
-    unique_pids = list(set(found_ids.values()))
+    all_pids = set()
+    for pids in found_ids.values():
+        all_pids.update(pids)
+
+    unique_pids = list(all_pids)
     player_data_map = {}
     
     if unique_pids:
@@ -1039,15 +1061,23 @@ def _resolve_batch_players(conn: sqlite3.Connection, player_names: List[str]) ->
 
     # Map back
     for norm in unique_norms:
-        res_data = None
-        if norm in found_ids and found_ids[norm] in player_data_map:
-            res_data = player_data_map[found_ids[norm]]
-            
+        players_list = []
+        if norm in found_ids:
+             for pid in found_ids[norm]:
+                 if pid in player_data_map:
+                     players_list.append(player_data_map[pid])
+        
+        # Sort players (by league priority then name)
+        players_list.sort(key=lambda x: (get_league_priority(x.get("league", "")), x.get("normalized_name", "")))
+
         for original in input_map[norm]:
-            if res_data:
-                final_obj = res_data.copy()
-                final_obj["type"] = "player"
-                final_obj["query"] = original
+            if players_list:
+                final_obj = {
+                     "type": "player",
+                     "query": original,
+                     "players": players_list,
+                     "player_count": len(players_list)
+                }
                 results[original] = final_obj
             else:
                 results[original] = None
