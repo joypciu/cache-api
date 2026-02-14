@@ -18,7 +18,7 @@ import os
 import time
 from collections import defaultdict
 from dotenv import load_dotenv
-from cache_db import get_cache_entry, get_batch_cache_entries, get_precision_batch_cache_entries
+from cache_db import get_cache_entry, get_batch_cache_entries, get_precision_batch_cache_entries, get_all_leagues
 from redis_cache import get_cache_stats, clear_all_cache, invalidate_cache
 import uuid
 import request_tracking
@@ -553,6 +553,53 @@ async def get_precision_batch_cache(
         raise HTTPException(
             status_code=500,
             detail=f"Error processing precision batch query: {str(e)}"
+        )
+
+
+@app.get("/leagues")
+async def get_leagues(
+    request: Request,
+    sport: Optional[str] = Query(None, description="Filter by sport name (e.g., 'Soccer', 'Basketball')"),
+    search: Optional[str] = Query(None, description="Search term to filter league names"),
+    region: Optional[str] = Query(None, description="Filter by region (e.g., 'Europe', 'North America')"),
+    token: str = Depends(verify_token),
+    _: None = Depends(verify_rate_limit)
+) -> JSONResponse:
+    """
+    Get all leagues with optional filtering (requires authentication).
+    
+    Parameters:
+    - sport: Filter by sport name (e.g., 'Soccer', 'Basketball', 'American Football')
+    - search: Search term to filter league names (partial match)
+    - region: Filter by region
+    
+    Returns:
+    - List of leagues with their details and aliases
+    
+    Examples:
+    - /leagues (get all leagues)
+    - /leagues?sport=Soccer
+    - /leagues?search=premier
+    - /leagues?sport=Soccer&region=europe
+    - /leagues?search=NBA
+    """
+    try:
+        result = await run_in_threadpool(
+            get_all_leagues,
+            sport=sport,
+            search=search,
+            region=region
+        )
+        
+        return JSONResponse(
+            status_code=200,
+            content=result
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving leagues: {str(e)}"
         )
 
 

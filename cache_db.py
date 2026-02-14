@@ -1262,7 +1262,7 @@ def get_batch_cache_entries(
                 if data:
                     set_cached_data(data, market=m)
         
-        # Legacy loop for Leagues (unless critical)
+        # Legacy loop for Leagues
         if leagues:
             for l in leagues:
                 # Check Redis
@@ -1344,5 +1344,109 @@ def get_precision_batch_cache_entries(queries: List[Dict[str, Any]]) -> Dict[str
         "successful": successful,
         "failed": failed
     }
+
+
+def get_all_leagues(
+    sport: Optional[str] = None,
+    search: Optional[str] = None,
+    region: Optional[str] = None,
+    active_connection: Optional[sqlite3.Connection] = None
+) -> Dict[str, Any]:
+    """
+    Get all leagues from the database with optional filtering.
+    
+    Args:
+        sport: Filter by sport name (optional)
+        search: Search term to filter league names (optional)
+        region: Filter by region (optional)
+        active_connection: Existing database connection to use (optional)
+    
+    Returns:
+        Dictionary with leagues data and metadata
+    """
+    if active_connection:
+        conn = active_connection
+        should_close = False
+    else:
+        conn = get_db_connection()
+        should_close = True
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Build query with filters
+        query = """
+            SELECT 
+                l.id,
+                l.name,
+                l.numerical_id,
+                l.sport_id,
+                s.name as sport_name,
+                l.region,
+                l.region_code,
+                l.gender
+            FROM leagues l
+            LEFT JOIN sports s ON l.sport_id = s.id
+            WHERE 1=1
+        """
+        params = []
+        
+        # Add sport filter
+        if sport:
+            query += " AND LOWER(s.name) = ?"
+            params.append(normalize_key(sport))
+        
+        # Add search filter
+        if search:
+            query += " AND LOWER(l.name) LIKE ?"
+            params.append(f"%{normalize_key(search)}%")
+        
+        # Add region filter
+        if region:
+            query += " AND LOWER(l.region) = ?"
+            params.append(normalize_key(region))
+        
+        query += " ORDER BY s.name, l.name"
+        
+        cursor.execute(query, params)
+        results = cursor.fetchall()
+        
+        leagues_data = []
+        for row in results:
+            league_dict = {
+                "id": row["id"],
+                "name": row["name"],
+                "numerical_id": row["numerical_id"],
+                "sport_id": row["sport_id"],
+                "sport_name": row["sport_name"],
+                "region": row["region"],
+                "region_code": row["region_code"],
+                "gender": row["gender"]
+            }
+            
+            # Get aliases for this league
+            cursor.execute("""
+                SELECT alias FROM league_aliases
+                WHERE league_id = ?
+                ORDER BY alias
+            """, (row["id"],))
+            aliases = [alias_row["alias"] for alias_row in cursor.fetchall()]
+            league_dict["aliases"] = aliases
+            
+            leagues_data.append(league_dict)
+        
+        return {
+            "total": len(leagues_data),
+            "leagues": leagues_data,
+            "filters": {
+                "sport": sport,
+                "search": search,
+                "region": region
+            }
+        }
+        
+    finally:
+        if should_close:
+            conn.close()
 
 
