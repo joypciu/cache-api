@@ -1,0 +1,119 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Security / Secrets
+API_KEYS.md
+.env
+.env.local
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# Database files (when real DB is added)
+# *.db files are tracked via Git LFS
+# Ignore SQLite files except the main database
+*.sqlite
+*.sqlite3
+*.db
+# Allow sports_data.db to be tracked
+!sports_data.db
+
+# ignore test files
+test_*.py
+*.test.py
+tests/
+test/
+test_data/
+test_data.json
+# Local Databases and Logs
+request_logs/
+*.db-shm
+*.db-wal
+uuid_tracking.db
+
+
+# ignore md files
+final_report.md
+final_report.pdf
+
+# ignore old database
+sports_data_old.db
+
+# igonore all files named with "verify"
+*verify*
+*verify*.py
+verify_*.py
+verify_*.ipynb
+verify*.ipynb
+verify_failures_production.py
