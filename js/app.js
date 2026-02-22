@@ -4,7 +4,7 @@
 
 // Configuration
 const CONFIG = {
-    apiBaseUrl: 'https://cache-api.eternitylabs.co',
+    apiBaseUrl: 'http://localhost:8001',
     checkInterval: 30000 // 30 seconds
 };
 
@@ -166,6 +166,8 @@ function switchTab(tabId) {
         fetchSessions();
     } else if (tabId === 'overview') {
         updateStats();
+    } else if (tabId === 'missing') {
+        fetchMissingData();
     }
 }
 
@@ -464,5 +466,217 @@ function copyToClipboard(elementId) {
     if (el) {
         el.select();
         document.execCommand('copy');
+    }
+}
+/**
+ * Missing Data Functions
+ */
+async function fetchMissingData() {
+    const token = localStorage.getItem('adminToken');
+    if (!token) return;
+    
+    const typeFilter = document.getElementById('missingTypeFilter')?.value || '';
+    const sortBy = document.getElementById('missingSortBy')?.value || 'last_seen';
+    const limit = parseInt(document.getElementById('missingLimit')?.value || '50');
+    
+    try {
+        const params = new URLSearchParams({
+            limit: limit,
+            offset: 0,
+            sort_by: sortBy
+        });
+        
+        if (typeFilter) {
+            params.append('item_type', typeFilter);
+        }
+        
+        const response = await fetch(`${CONFIG.apiBaseUrl}/admin/missing-items?${params}`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to fetch missing data');
+        }
+        
+        const data = await response.json();
+        displayMissingData(data);
+        
+    } catch (error) {
+        console.error('Error fetching missing data:', error);
+        const tbody = document.getElementById('missingDataTableBody');
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="7" class="text-center" style="color: #f44336;">Error loading data: ${error.message}</td></tr>`;
+        }
+    }
+}
+
+function displayMissingData(data) {
+    const tbody = document.getElementById('missingDataTableBody');
+    const summaryDiv = document.getElementById('missingStatsByType');
+    
+    // Update summary statistics
+    document.getElementById('missingTotalUnique').textContent = data.total || 0;
+    
+    let totalOccurrences = 0;
+    if (data.stats_by_type) {
+        Object.values(data.stats_by_type).forEach(stat => {
+            totalOccurrences += stat.total_occurrences || 0;
+        });
+    }
+    document.getElementById('missingTotalOccurrences').textContent = totalOccurrences;
+    
+    // Display stats by type
+    if (summaryDiv && data.stats_by_type) {
+        summaryDiv.innerHTML = '';
+        Object.entries(data.stats_by_type).forEach(([type, stats]) => {
+            const typeCard = document.createElement('div');
+            typeCard.style.cssText = 'padding: 10px; background: #f5f5f5; border-radius: 4px; border-left: 3px solid #2196F3;';
+            typeCard.innerHTML = `
+                <div style="font-weight: 600; text-transform: capitalize; margin-bottom: 5px;">${getTypeIcon(type)} ${type}</div>
+                <div style="font-size: 0.9em; color: #666;">
+                    Unique: ${stats.unique_count} | Total: ${stats.total_occurrences}
+                </div>
+            `;
+            summaryDiv.appendChild(typeCard);
+        });
+    }
+    
+    // Display table data
+    if (!tbody) return;
+    
+    if (!data.items || data.items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center" style="color: #999;">No missing data found</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = data.items.map(item => {
+        const firstSeen = formatTimestamp(item.first_seen);
+        const lastSeen = formatTimestamp(item.last_seen);
+        const context = formatContext(item.query_params);
+        
+        return `
+            <tr>
+                <td><span style="display: inline-block; padding: 2px 8px; background: ${getTypeColor(item.item_type)}; color: white; border-radius: 3px; font-size: 0.85em;">${getTypeIcon(item.item_type)} ${item.item_type}</span></td>
+                <td style="font-weight: 500;">${escapeHtml(item.item_value)}</td>
+                <td><code style="font-size: 0.9em;">${escapeHtml(item.endpoint)}</code></td>
+                <td style="font-size: 0.9em; color: #666;">${context}</td>
+                <td style="font-size: 0.9em;">${firstSeen}</td>
+                <td style="font-size: 0.9em;">${lastSeen}</td>
+                <td style="text-align: center;"><span style="display: inline-block; padding: 2px 8px; background: #ff9800; color: white; border-radius: 12px; font-size: 0.85em; font-weight: 600;">${item.occurrence_count}</span></td>
+            </tr>
+        `;
+    }).join('');
+    
+    // Update pagination info
+    const paginationDiv = document.getElementById('missingDataPagination');
+    if (paginationDiv) {
+        paginationDiv.textContent = `Showing ${data.items.length} of ${data.total} items`;
+    }
+}
+
+function getTypeIcon(type) {
+    const icons = {
+        'market': '📊',
+        'team': '🏆',
+        'player': '👤',
+        'league': '🏅'
+    };
+    return icons[type] || '📌';
+}
+
+function getTypeColor(type) {
+    const colors = {
+        'market': '#2196F3',
+        'team': '#4CAF50',
+        'player': '#FF9800',
+        'league': '#9C27B0'
+    };
+    return colors[type] || '#757575';
+}
+
+function formatContext(queryParams) {
+    if (!queryParams || typeof queryParams !== 'object') return '-';
+    
+    const relevant = Object.entries(queryParams)
+        .filter(([key, value]) => value && value !== null && value !== '')
+        .map(([key, value]) => `${key}: ${value}`);
+    
+    if (relevant.length === 0) return '-';
+    if (relevant.length <= 2) return relevant.join(', ');
+    
+    return relevant.slice(0, 2).join(', ') + '...';
+}
+
+function formatTimestamp(timestamp) {
+    if (!timestamp) return '-';
+    
+    try {
+        const date = new Date(timestamp);
+        const now = new Date();
+        const diff = now - date;
+        
+        // Less than 1 minute
+        if (diff < 60000) return 'Just now';
+        
+        // Less than 1 hour
+        if (diff < 3600000) {
+            const mins = Math.floor(diff / 60000);
+            return `${mins} min${mins > 1 ? 's' : ''} ago`;
+        }
+        
+        // Less than 24 hours
+        if (diff < 86400000) {
+            const hours = Math.floor(diff / 3600000);
+            return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+        }
+        
+        // Less than 7 days
+        if (diff < 604800000) {
+            const days = Math.floor(diff / 86400000);
+            return `${days} day${days > 1 ? 's' : ''} ago`;
+        }
+        
+        // Format as date
+        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+    } catch (e) {
+        return timestamp;
+    }
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+async function clearMissingData() {
+    if (!confirm('Are you sure you want to clear all missing data records?')) {
+        return;
+    }
+    
+    const token = localStorage.getItem('adminToken');
+    if (!token) return;
+    
+    try {
+        const response = await fetch(`${CONFIG.apiBaseUrl}/admin/missing-items`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to clear missing data');
+        }
+        
+        showNotification('Missing data cleared successfully', 'success');
+        fetchMissingData();
+        
+    } catch (error) {
+        console.error('Error clearing missing data:', error);
+        showNotification('Failed to clear missing data: ' + error.message, 'error');
     }
 }
