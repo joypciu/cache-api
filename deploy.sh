@@ -190,6 +190,17 @@ print_success "Systemd service installed"
 
 # Enable and restart service
 print_info "Starting $SERVICE_NAME service..."
+sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+
+# Fail fast if another process is occupying API_PORT.
+if sudo ss -ltnp | grep -q ":${API_PORT} "; then
+    print_error "Port ${API_PORT} is already in use by another process."
+    print_info "Port owner details:"
+    sudo ss -ltnp | grep ":${API_PORT} " || true
+    print_info "Use a different DEPLOY_PORT or free this port before deploy."
+    exit 1
+fi
+
 sudo systemctl enable "$SERVICE_NAME"
 sudo systemctl restart "$SERVICE_NAME"
 
