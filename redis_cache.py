@@ -22,6 +22,20 @@ CACHE_TTL = int(os.getenv('CACHE_TTL', 3600))
 redis_client = None
 
 
+def _iter_cache_keys(client):
+    """Yield cache keys using SCAN to avoid blocking Redis with KEYS."""
+    for key in client.scan_iter(match='cache:*', count=500):
+        yield key
+
+
+def _count_cache_keys(client) -> int:
+    """Count cache keys safely using SCAN iteration."""
+    count = 0
+    for _ in _iter_cache_keys(client):
+        count += 1
+    return count
+
+
 def get_redis_client():
     """Get or create Redis client connection"""
     global redis_client
@@ -241,15 +255,23 @@ def clear_all_cache() -> bool:
         return False
     
     try:
-        # Delete all keys matching our cache pattern
-        keys = client.keys('cache:*')
-        if keys:
-            deleted = client.delete(*keys)
-            print(f"✓ Cleared {deleted} cache entries")
-            return True
+        # Delete keys matching our cache pattern using SCAN batches.
+        batch = []
+        deleted_total = 0
+        for key in _iter_cache_keys(client):
+            batch.append(key)
+            if len(batch) >= 500:
+                deleted_total += client.delete(*batch)
+                batch = []
+
+        if batch:
+            deleted_total += client.delete(*batch)
+
+        if deleted_total > 0:
+            print(f"✓ Cleared {deleted_total} cache entries")
         else:
             print("No cache entries to clear")
-            return True
+        return True
             
     except Exception as e:
         print(f"Redis clear error: {e}")
@@ -273,7 +295,7 @@ def get_cache_stats() -> Dict[str, Any]:
     
     try:
         info = client.info()
-        cache_keys = len(client.keys('cache:*'))
+        cache_keys = _count_cache_keys(client)
         
         return {
             "status": "online",

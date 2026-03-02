@@ -96,6 +96,14 @@ def init_tracking():
         conn.execute('CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_sessions_last_activity ON sessions(last_activity)')
 
+        # One-time migration: ensure location column exists.
+        existing_columns = {
+            row['name']
+            for row in conn.execute("PRAGMA table_info(requests)")
+        }
+        if 'location' not in existing_columns:
+            conn.execute("ALTER TABLE requests ADD COLUMN location TEXT")
+
     print(f"Request tracking initialized. Database: {DB_FILE}")
 
 def create_session(user_identifier: str, ip_address: str, user_agent: str, token_type: str) -> str:
@@ -204,12 +212,6 @@ def track_request(
 
     try:
         with get_db_connection() as conn:
-            # Add columns if they don't exist (Migration)
-            try:
-                conn.execute("ALTER TABLE requests ADD COLUMN location TEXT")
-            except sqlite3.OperationalError:
-                pass
-            
             # Insert request
             conn.execute('''
             INSERT INTO requests (

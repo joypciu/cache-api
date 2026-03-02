@@ -238,7 +238,7 @@ app.mount("/admin/js", StaticFiles(directory="js"), name="admin_js")
 app.mount("/admin/css", StaticFiles(directory="css"), name="admin_css")
 
 @app.get("/admin/dashboard", tags=["admin"])
-async def serve_dashboard():
+async def serve_dashboard(token: str = Depends(verify_admin_token)):
     """Serve the admin dashboard"""
     return FileResponse("dashboard.html")
 
