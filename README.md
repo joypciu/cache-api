@@ -1,41 +1,44 @@
 # Cache API
 
-FastAPI service for normalized sports cache lookups with Redis-backed caching.
+FastAPI service for sports cache normalization with Redis-backed caching, batch lookup support, request/session tracking, and VPS auto-deployment.
 
-## Features
+## What this service does
 
-- Token-authenticated API access (`Bearer` token)
-- Single query endpoint (`/cache`)
-- Batch query endpoint (`/cache/batch`)
-- Precision batch endpoint (`/cache/batch/precision`)
-- League listing endpoint (`/leagues`)
-- Redis cache stats/invalidation/clear (admin-only)
-- GitHub Actions deployment to VPS via SSH
+- Normalizes cache lookups for `market`, `team`, `player`, and `league`
+- Supports single query and two batch modes
+- Exposes admin-only cache and request/session monitoring endpoints
+- Uses Redis for caching and SQLite-backed lookup data
+- Deploys to VPS through GitHub Actions + `deploy.sh`
 
-## Tech Stack
+## Tech stack
 
-- Python + FastAPI
-- SQLite (data source)
-- Redis (cache layer)
-- systemd (service management)
-- Nginx (reverse proxy)
+- FastAPI + Uvicorn
+- Redis (`redis`, `hiredis`)
+- SQLite data files
+- systemd service management
+- Nginx reverse proxy on VPS
 
-## Local Run
+## Quick start (local)
 
-1. Create and activate virtual env.
+1. Create and activate virtual environment.
 2. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Create `.env` from template and set tokens:
+3. Create local env file:
 
 ```bash
 cp .env.example .env
 ```
 
-4. Run:
+4. Set at least:
+
+- `API_TOKEN`
+- `ADMIN_API_TOKEN` (or fallback `ADMIN_TOKEN`)
+
+5. Run API:
 
 ```bash
 python main.py
@@ -49,109 +52,216 @@ http://localhost:5000
 
 ## Authentication
 
-All protected endpoints require:
+Protected endpoints require:
 
 ```text
 Authorization: Bearer <token>
 ```
 
-- `API_TOKEN`: non-admin token
-- `ADMIN_API_TOKEN` (or `ADMIN_TOKEN`): admin token
+- `API_TOKEN`: user token for non-admin endpoints
+- `ADMIN_API_TOKEN` / `ADMIN_TOKEN`: admin token for admin endpoints
 
-Never commit real token values to git.
+If no valid tokens are configured, protected routes return server error.
 
-## Endpoints
+## Rate limiting
 
-- `GET /` public health/info
-- `GET /cache` protected
-- `POST /cache/batch` protected
-- `POST /cache/batch/precision` protected
-- `GET /leagues` protected
-- `GET /health` admin
-- `GET /cache/stats` admin
-- `DELETE /cache/invalidate` admin
-- `DELETE /cache/clear` admin
+- Per-IP in-memory limiter
+- Controlled by `RATE_LIMIT_PER_MINUTE` (default `60`)
+- Applied to user API routes (`/cache`, `/cache/batch`, `/cache/batch/precision`, `/leagues`)
 
-## Testing
+## API endpoints
 
-`testing.py` supports 3 modes:
+### Public
+
+- `GET /`
+  - Service status/metadata
+
+### Authenticated (user or admin token)
+
+- `GET /cache`
+  - Query params: `market`, `team`, `player`, `sport`, `league`
+  - Validation:
+    - at least one of `market|team|player|league` is required
+    - `sport` required for team-only search
+    - `sport` required for league search
+- `POST /cache/batch`
+  - Body fields: `team[]`, `player[]`, `market[]`, `sport`, `league[]`
+  - Independent batch lookup per category
+- `POST /cache/batch/precision`
+  - Body: `{ "queries": [ {team/player/market/sport/league...}, ... ] }`
+  - Combined-parameter precision lookups
+- `GET /leagues`
+  - Query params: `sport`, `search`, `region`
+
+### Admin-only
+
+- `GET /health`
+- `GET /cache/stats`
+- `DELETE /cache/clear`
+- `DELETE /cache/invalidate` (query params: `market`, `team`, `player`, `sport`, `league`)
+- `GET /admin/dashboard`
+- `GET /admin/logs` (`limit`, `offset`, optional `session_id`, `path`)
+- `GET /admin/sessions`
+- `GET /admin/stats/cache`
+
+### Docs/OpenAPI behavior
+
+- `GET /docs` serves Swagger UI
+- `GET /openapi.json` hides routes tagged `admin` unless valid admin cookie is present
+
+## Environment variables
+
+Core runtime variables:
+
+- `API_TOKEN`
+- `ADMIN_API_TOKEN` (fallback: `ADMIN_TOKEN`)
+- `RATE_LIMIT_PER_MINUTE` (default `60`)
+- `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_PASSWORD`
+- `CACHE_TTL`
+
+Notes:
+
+- `main.py` currently runs Uvicorn on port `5000` when started directly.
+- On Windows local development, app attempts to auto-start Docker container `local-redis` if `REDIS_HOST` is unset.
+
+## Testing utility
+
+`testing.py` is now a full endpoint validation runner.
+
+### Supported modes
 
 ```bash
-python testing.py --mode quick
-python testing.py --mode compare
-python testing.py --mode extensive
+python testing.py --mode quick --token <user_token>
+python testing.py --mode compare --token <user_token>
+python testing.py --mode extensive --token <user_token>
+python testing.py --mode full --target prod --token <user_token> --admin-token <admin_token>
 ```
 
-- `quick`: concise per-request summary
-- `compare`: local vs production diff + timing
-- `extensive`: endpoint/parameter combination checks
+Mode summary:
 
-Output is summarized (status, latency, response size/count), not full payload dumps.
+- `quick`: smoke run for `/cache/batch` on local + prod
+- `compare`: deep diff for `/cache/batch` payload responses (local vs prod)
+- `extensive`: broader local-vs-prod combinations for `/cache`, `/cache/batch`, `/cache/batch/precision`, `/leagues`
+- `full` (default): endpoint health/auth/user/admin validation with pass/fail summary
 
-## Deployment (Hardened)
+### Target selection
 
-Deployment is done by GitHub Actions (`.github/workflows/deploy.yml`) and calls `deploy.sh`.
+```bash
+python testing.py --mode full --target prod  --token <user_token> --admin-token <admin_token>
+python testing.py --mode full --target local --token <user_token> --admin-token <admin_token>
+python testing.py --mode full --target both  --token <user_token> --admin-token <admin_token>
+```
 
-The deployment is isolated by these secrets:
+- `prod`: only production base URL
+- `local`: only local base URL
+- `both`: runs both environments (default)
 
+### Token and environment variable fallback
+
+- User token lookup order:
+  1. `--token`
+  2. `CACHE_API_TOKEN`
+  3. `API_TOKEN`
+- Admin token lookup order:
+  1. `--admin-token`
+  2. `CACHE_API_ADMIN_TOKEN`
+  3. `ADMIN_API_TOKEN`
+  4. `ADMIN_TOKEN`
+
+### Optional destructive checks
+
+By default, destructive endpoint tests are skipped.
+
+```bash
+python testing.py --mode full --target prod --token <user_token> --admin-token <admin_token> --include-destructive
+```
+
+This currently enables testing `DELETE /cache/clear`.
+
+### Output and exit behavior
+
+- Each test line prints endpoint, status, expected status, latency, and `ok=True/False`
+- Final summary prints `total`, `passed`, `failed`
+- Exit code is `0` only when all checks pass; otherwise `1` (CI-friendly)
+
+## Deployment flow (GitHub Actions + VPS)
+
+Push to `main` triggers `.github/workflows/deploy.yml`, which:
+
+1. Runs deployment preflight guard checks
+2. SSHes to VPS
+3. Executes `deploy.sh`
+4. Updates repo in target service directory
+5. Installs/updates dependencies
+6. Manages systemd service + restart + verification
+
+### Required deploy secrets
+
+- `VPS_HOST`, `VPS_PORT`, `VPS_USERNAME`, `VPS_SSH_KEY`
 - `DEPLOY_SERVICE_NAME`
 - `DEPLOY_DIR`
-- `DEPLOY_PORT`
 - `DEPLOY_BRANCH`
+- `DEPLOY_PORT`
 - `DEPLOY_REPO_URL`
 - `DEPLOY_REPO_SLUG`
-- `VPS_HOST`
-- `VPS_PORT`
-- `VPS_USERNAME`
-- `VPS_SSH_KEY`
+- `DEPLOY_PREVIOUS_SERVICE_NAME` (optional migration helper)
+- `DEPLOY_PRIMARY_REPO_SLUG` (recommended)
+- `DEPLOY_PRODUCTION_SERVICE_NAME` (recommended)
+- `DEPLOY_PRODUCTION_PORT` (recommended)
+- `DEPLOY_NGINX_SITE_NAME` (recommended)
+- `DEPLOY_PROTECTED_NGINX_SITE_NAME` (recommended)
 
-### Important
+## Fork-safe production protection
 
-- Use unique `DEPLOY_SERVICE_NAME`, `DEPLOY_DIR`, and `DEPLOY_PORT` per project.
-- Do not share deploy SSH keys across unrelated repos.
-- Do not expose Actions secrets to forks.
+The deploy system now blocks non-primary repositories from using protected production resources.
 
-## Security Notes
+Guard error codes you may see:
 
-- Do not store real tokens, private keys, or passwords in repository files.
-- Keep `.env` out of version control.
-- Rotate secrets immediately if leaked.
-- Restrict Redis to local/private network only.
-- Prefer least-privilege SSH keys for deployment.
+- `GUARD:SERVICE_NAME_RESERVED`
+  - Non-primary repo tried to use protected service name
+- `GUARD:PORT_RESERVED`
+  - Non-primary repo tried to use protected production port
+- `GUARD:NGINX_SITE_RESERVED`
+  - Non-primary repo tried to use protected nginx site name
+- `GUARD:NGINX_SITE_EXISTS`
+  - Chosen nginx site already exists on VPS
+
+Fix for fork/secondary deployments:
+
+- Set unique `DEPLOY_SERVICE_NAME`
+- Set unique `DEPLOY_DIR`
+- Set unique `DEPLOY_PORT`
+- Set unique `DEPLOY_NGINX_SITE_NAME`
 
 ## Troubleshooting
 
-Check service logs:
+Service logs:
 
 ```bash
 sudo journalctl -u <service-name> -n 100 --no-pager
 ```
 
-Check active ports:
+Port check:
 
 ```bash
-sudo ss -tulpn
+sudo ss -ltnp
 ```
 
-Check nginx config:
+Systemd status:
+
+```bash
+sudo systemctl status <service-name> --no-pager
+```
+
+Nginx config dump:
 
 ```bash
 sudo nginx -T
 ```
 
-Restart service:
+## Security hygiene
 
-```bash
-sudo systemctl restart <service-name>
-sudo systemctl status <service-name> --no-pager
-```
-
-## Repository Hygiene
-
-- Keep `.env` and local secret files ignored.
-- Keep `README.md` free of real credentials, real tokens, and private keys.
-- Use placeholders in docs:
-  - `<your-domain>`
-  - `<your-token>`
-  - `<your-vps-ip>`
-
+- Never commit real API/admin tokens, SSH keys, or passwords
+- Keep `.env` local and rotated if leaked
+- Use least-privilege deploy credentials
+- Keep fork deployments isolated by unique service/port/nginx identity
