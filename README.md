@@ -298,3 +298,94 @@ sudo nginx -T
 - Keep `.env` local and rotated if leaked
 - Use least-privilege deploy credentials
 - Keep fork deployments isolated by unique service/port/nginx identity
+
+## Dashboard roadmap (planning only)
+
+This section is a **future plan only** for admin-dashboard improvements. No items below are implemented yet unless already documented elsewhere.
+
+### 1) Token governance and visibility
+
+Goal: give admins full visibility into token distribution and usage.
+
+Planned features:
+
+- Token inventory table (masked token, owner, created date, last used, status)
+- Token distribution summary (active vs inactive, admin vs user, tokens by owner/team)
+- Token usage trends (requests/day per token, unique IPs, last 24h / 7d / 30d)
+- Token risk indicators (unused long-term, abnormal request bursts, unknown geo/IP)
+
+### 2) Token lifecycle management
+
+Goal: allow secure creation and management of user tokens directly from dashboard.
+
+Planned features:
+
+- Create token (name/owner/role/expiry/rate-limit profile)
+- Revoke/disable token immediately
+- Rotate token (generate replacement + deprecate old token)
+- Optional scoped permissions by endpoint group
+- Audit trail for token create/rotate/revoke events
+
+### 3) Request failure analytics
+
+Goal: quickly answer "which requests are failing and why".
+
+Planned features:
+
+- Failure heatmap by endpoint + status code
+- Drill-down by parameter patterns (market/team/player/sport/league)
+- Top failing query signatures with counts and recent samples
+- Time-window comparison (e.g., last 1h vs previous 1h)
+- Export failed-request report (CSV/JSON)
+
+### 4) Missing-filter intelligence
+
+Goal: identify user filters/queries not present in current DB mappings.
+
+Planned features:
+
+- "Not found" leaderboard by value and endpoint
+- Missing value clustering (synonym/typo/case variants)
+- Suggestions from closest known mappings (fuzzy candidates)
+- Breakdown by dimension:
+  - markets not mapped
+  - teams not mapped
+  - players not mapped
+  - leagues/sports mismatches
+- Prioritized backlog feed for data/mapping updates
+
+### 5) Operational observability
+
+Goal: connect dashboard insights to platform health.
+
+Planned features:
+
+- Cache performance panel (hit/miss rate by endpoint and token)
+- Latency percentiles (p50/p95/p99) by endpoint
+- Error budget and SLO-style tracking
+- Deployment correlation (error spikes after specific releases)
+
+### 6) Security and compliance controls
+
+Goal: harden admin operations and access controls.
+
+Planned features:
+
+- Role-based admin permissions (viewer/operator/admin)
+- Mandatory admin action logging with actor + timestamp + reason
+- Session controls (max session age, forced logout, suspicious-login alerts)
+- Optional 2FA for admin dashboard login
+
+### 7) Suggested implementation phases
+
+Phase 1 (MVP):
+
+- Token inventory, request-failure table, missing-filter leaderboard, basic CSV export
+
+Phase 2:
+
+- Token create/revoke/rotate, scoped permissions, richer analytics and charts
+
+Phase 3:
+
+- Alerting, anomaly detection, SLO dashboards, advanced admin security controls
