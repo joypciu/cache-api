@@ -7,3 +7,4 @@ hiredis
 python-dotenv
 requests
 geoip2
+python-multipart
