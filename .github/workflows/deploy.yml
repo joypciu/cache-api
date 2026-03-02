@@ -27,6 +27,54 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Deployment preflight (guard debug)
+        shell: bash
+        run: |
+          set -e
+          RAW_SERVICE_NAME="${DEPLOY_SERVICE_NAME:-cache-api}"
+          if [ "${RAW_SERVICE_NAME}" = "cache-api-prod" ]; then
+            SERVICE_NAME="cache-api"
+          else
+            SERVICE_NAME="${RAW_SERVICE_NAME}"
+          fi
+
+          PORT="${DEPLOY_PORT:-5000}"
+          PRIMARY_REPO_SLUG="${DEPLOY_PRIMARY_REPO_SLUG:-joypciu/cache-api}"
+          PRODUCTION_SERVICE_NAME="${DEPLOY_PRODUCTION_SERVICE_NAME:-cache-api}"
+          PRODUCTION_PORT="${DEPLOY_PRODUCTION_PORT:-5000}"
+          NGINX_SITE_NAME="${DEPLOY_NGINX_SITE_NAME:-${SERVICE_NAME}}"
+          PROTECTED_NGINX_SITE_NAME="${DEPLOY_PROTECTED_NGINX_SITE_NAME:-cache-api}"
+          SOURCE_REPO_SLUG="${GITHUB_REPOSITORY}"
+
+          echo "=== Deploy Preflight ==="
+          echo "source_repo=${SOURCE_REPO_SLUG}"
+          echo "primary_repo=${PRIMARY_REPO_SLUG}"
+          echo "service_name=${SERVICE_NAME}"
+          echo "port=${PORT}"
+          echo "nginx_site=${NGINX_SITE_NAME}"
+
+          if [ "${SOURCE_REPO_SLUG}" != "${PRIMARY_REPO_SLUG}" ]; then
+            if [ "${SERVICE_NAME}" = "${PRODUCTION_SERVICE_NAME}" ]; then
+              echo "❌ [GUARD:SERVICE_NAME_RESERVED] Non-primary repo cannot use protected service '${PRODUCTION_SERVICE_NAME}'."
+              echo "Set unique DEPLOY_SERVICE_NAME and DEPLOY_DIR."
+              exit 1
+            fi
+
+            if [ "${PORT}" = "${PRODUCTION_PORT}" ]; then
+              echo "❌ [GUARD:PORT_RESERVED] Non-primary repo cannot use protected port '${PRODUCTION_PORT}'."
+              echo "Set a unique DEPLOY_PORT."
+              exit 1
+            fi
+
+            if [ "${NGINX_SITE_NAME}" = "${PROTECTED_NGINX_SITE_NAME}" ]; then
+              echo "❌ [GUARD:NGINX_SITE_RESERVED] Non-primary repo cannot use protected nginx site '${PROTECTED_NGINX_SITE_NAME}'."
+              echo "Set a unique DEPLOY_NGINX_SITE_NAME."
+              exit 1
+            fi
+          fi
+
+          echo "✅ Preflight passed"
+
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.0.0
         with:
@@ -57,7 +105,7 @@ jobs:
             PREVIOUS_SERVICE="${DEPLOY_PREVIOUS_SERVICE_NAME:-}"
             ALLOW_PRIMARY_SERVICE_NAME="false"
 
-            if [ "${SERVICE_NAME}" = "cache-api" ] && [ "${SOURCE_REPO_SLUG}" = "${PRIMARY_REPO_SLUG}" ]; then
+            if [ "${SERVICE_NAME}" = "${PRODUCTION_SERVICE_NAME}" ] && [ "${SOURCE_REPO_SLUG}" = "${PRIMARY_REPO_SLUG}" ]; then
               ALLOW_PRIMARY_SERVICE_NAME="true"
             fi
 

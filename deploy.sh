@@ -88,7 +88,7 @@ fi
 
 if [ "$SERVICE_NAME" = "$PRODUCTION_SERVICE_NAME" ]; then
     if [ "$ALLOW_PRIMARY_SERVICE_NAME" != "true" ] || [ "$SOURCE_REPO_SLUG" != "$PRIMARY_REPO_SLUG" ]; then
-        print_error "Protected service name ${PRODUCTION_SERVICE_NAME} is reserved for the primary repository only."
+        print_error "[GUARD:SERVICE_NAME_RESERVED] Protected service name ${PRODUCTION_SERVICE_NAME} is reserved for the primary repository only."
         print_info "source repo: $SOURCE_REPO_SLUG"
         print_info "primary repo: $PRIMARY_REPO_SLUG"
         print_info "For forks, use unique DEPLOY_SERVICE_NAME, DEPLOY_DIR, and DEPLOY_PORT."
@@ -98,19 +98,19 @@ fi
 
 if [ "$ALLOW_PRIMARY_SERVICE_NAME" != "true" ] || [ "$SOURCE_REPO_SLUG" != "$PRIMARY_REPO_SLUG" ]; then
     if [ "$API_PORT" = "$PRODUCTION_PORT" ]; then
-        print_error "Protected production port ${PRODUCTION_PORT} is reserved for the primary repository only."
+        print_error "[GUARD:PORT_RESERVED] Protected production port ${PRODUCTION_PORT} is reserved for the primary repository only."
         print_info "For forks, set a unique DEPLOY_PORT."
         exit 1
     fi
 
     if [ "$NGINX_SITE_NAME" = "$PROTECTED_NGINX_SITE_NAME" ]; then
-        print_error "Protected nginx site ${PROTECTED_NGINX_SITE_NAME} is reserved for the primary repository only."
+        print_error "[GUARD:NGINX_SITE_RESERVED] Protected nginx site ${PROTECTED_NGINX_SITE_NAME} is reserved for the primary repository only."
         print_info "For forks, set a unique DEPLOY_NGINX_SITE_NAME."
         exit 1
     fi
 
     if sudo test -e "/etc/nginx/sites-enabled/${NGINX_SITE_NAME}" || sudo test -e "/etc/nginx/sites-available/${NGINX_SITE_NAME}"; then
-        print_error "Nginx site name ${NGINX_SITE_NAME} already exists on VPS."
+        print_error "[GUARD:NGINX_SITE_EXISTS] Nginx site name ${NGINX_SITE_NAME} already exists on VPS."
         print_info "Use a unique DEPLOY_NGINX_SITE_NAME for fork deployments."
         exit 1
     fi
