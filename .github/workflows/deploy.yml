@@ -4,10 +4,50 @@ on:
   push:
     branches:
       - main # Trigger on push to main branch
+  pull_request:
+    branches:
+      - main # Run validation checks on PRs targeting main
   workflow_dispatch: # Allow manual trigger
 
 jobs:
+  # ─────────────────────────────────────────────
+  # Syntax + automated tests (runs on every PR)
+  # ─────────────────────────────────────────────
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Check Python syntax (all files)
+        run: |
+          echo "=== Syntax check ==="
+          python -m py_compile main.py cache_db.py redis_cache.py request_tracking.py uuid_tracking.py
+          echo "✅ All files passed syntax check"
+
+      - name: Run automated PR tests
+        run: |
+          echo "=== Running PR validation tests ==="
+          pytest test_pr.py -v --tb=short
+          echo "✅ All tests passed"
+
+  # ─────────────────────────────────────────────
+  # Deploy — only runs when code lands on main
+  # ─────────────────────────────────────────────
   deploy:
+    needs: validate # Deploy only if validate passes
+    if: github.event_name != 'pull_request' # Skip deploy on PRs
     runs-on: ubuntu-latest
     env:
       DEPLOY_SERVICE_NAME: ${{ secrets.DEPLOY_SERVICE_NAME }}
