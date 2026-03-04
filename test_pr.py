@@ -48,9 +48,28 @@ WRONG_TOKEN = "totally-wrong-token"
 
 
 @pytest.fixture(scope="session", autouse=True)
-def stop_redis_patch():
-    """Stop the module-level Redis patch when the session finishes."""
-    yield
+def mock_db_and_cleanup():
+    """
+    Mock all DB-touching functions for the entire test session.
+
+    sports_data.db is gitignored and does not exist in CI.
+    Mocking these makes tests fully self-contained with no external files needed.
+
+    Return values chosen so endpoints respond correctly:
+      - get_cache_entry → None       → /cache returns 404 (not found, not a crash)
+      - get_batch_cache_entries → {} → /cache/batch returns 200 with empty body
+      - get_precision_batch_cache_entries → valid empty shape → 200
+      - get_all_leagues → valid empty shape → 200
+    """
+    with (
+        patch("main.get_cache_entry", return_value=None),
+        patch("main.get_batch_cache_entries", return_value={}),
+        patch("main.get_precision_batch_cache_entries", return_value={
+            "results": [], "total_queries": 0, "successful": 0, "failed": 0,
+        }),
+        patch("main.get_all_leagues", return_value={"leagues": [], "total": 0}),
+    ):
+        yield
     _redis_none_patcher.stop()
 
 
