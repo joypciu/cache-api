@@ -320,7 +320,7 @@ jobs:
           secure: true
           username: ${{ secrets.GMAIL_SENDER }}
           password: ${{ secrets.GMAIL_APP_PASSWORD }}
-          to: ${{ secrets.ADMIN_EMAIL }}
+          to: ${{ secrets.ADMIN_EMAIL }}, lutfurrahamn1036@gmail.com
           from: Cache API CI <${{ secrets.GMAIL_SENDER }}>
           subject: "🚨 Smoke Test FAILED — cache-api (${{ github.ref_name }})"
           body: |
