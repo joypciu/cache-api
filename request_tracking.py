@@ -104,6 +104,40 @@ def init_tracking():
         if 'location' not in existing_columns:
             conn.execute("ALTER TABLE requests ADD COLUMN location TEXT")
 
+        # Create missing_items table for tracking data not found in cache/database
+        conn.execute('''
+        CREATE TABLE IF NOT EXISTS missing_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            request_group_id TEXT,
+            timestamp TEXT,
+            item_type TEXT,
+            item_value TEXT,
+            endpoint TEXT,
+            query_params TEXT,
+            first_seen TEXT,
+            last_seen TEXT,
+            occurrence_count INTEGER DEFAULT 1,
+            UNIQUE(item_type, item_value, endpoint)
+        )
+        ''')
+        # Migration: add request_group_id for grouping missing values by request.
+        try:
+            conn.execute("ALTER TABLE missing_items ADD COLUMN request_group_id TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+        # Migration: add body_data column to store the request body/query sent.
+        try:
+            conn.execute("ALTER TABLE missing_items ADD COLUMN body_data TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+        # Create indices for missing items
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_missing_items_timestamp ON missing_items(timestamp)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_missing_items_type ON missing_items(item_type)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_missing_items_request_group_id ON missing_items(request_group_id)')
+
     print(f"Request tracking initialized. Database: {DB_FILE}")
 
 def create_session(user_identifier: str, ip_address: str, user_agent: str, token_type: str) -> str:
@@ -343,6 +377,214 @@ def clear_old_sessions(days_old: int = 7):
             print(f"Cleared old sessions before {cutoff_date}")
     except Exception as e:
         print(f"Error clearing old sessions: {e}")
+
+def track_missing_item(
+    session_id: str,
+    item_type: str,
+    item_value: str,
+    endpoint: str,
+    query_params: Optional[Dict[str, Any]] = None,
+    request_group_id: Optional[str] = None,
+    body_data: Optional[Dict[str, Any]] = None
+):
+    """
+    Track an item that was not found in cache or database.
+
+    Args:
+        session_id: Session identifier
+        item_type: Type of missing item (e.g., 'market', 'team', 'player', 'league')
+        item_value: The value that was searched for
+        endpoint: The API endpoint that was called
+        query_params: Query parameters from the request
+        request_group_id: Shared ID to group all missing values from the same request
+        body_data: The request body/query parameters sent with the request
+    """
+    try:
+        timestamp = datetime.now().isoformat()
+        query_params_json = json.dumps(query_params) if query_params else "{}"
+        body_data_json = json.dumps(body_data) if body_data else "{}"
+
+        with get_db_connection() as conn:
+            # Check if this item was already tracked
+            cursor = conn.execute('''
+            SELECT id, occurrence_count FROM missing_items
+            WHERE item_type = ? AND item_value = ? AND endpoint = ?
+            ''', (item_type, item_value, endpoint))
+
+            existing = cursor.fetchone()
+
+            if existing:
+                # Update existing record
+                conn.execute('''
+                UPDATE missing_items
+                SET last_seen = ?, occurrence_count = occurrence_count + 1, session_id = ?, query_params = ?, request_group_id = ?, body_data = ?
+                WHERE id = ?
+                ''', (timestamp, session_id, query_params_json, request_group_id, body_data_json, existing['id']))
+            else:
+                # Insert new record
+                conn.execute('''
+                INSERT INTO missing_items (
+                    session_id, request_group_id, timestamp, item_type, item_value, endpoint,
+                    query_params, first_seen, last_seen, occurrence_count, body_data
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                ''', (
+                    session_id, request_group_id, timestamp, item_type, item_value, endpoint,
+                    query_params_json, timestamp, timestamp, body_data_json
+                ))
+
+    except Exception as e:
+        print(f"Error tracking missing item: {e}")
+
+
+def get_missing_items(
+    item_type: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    sort_by: str = 'last_seen'  # 'last_seen', 'occurrence_count', 'first_seen'
+) -> Dict[str, Any]:
+    """
+    Retrieve missing items with optional filtering.
+
+    Args:
+        item_type: Filter by item type (e.g., 'market', 'team', 'player')
+        limit: Maximum number of results
+        offset: Offset for pagination
+        sort_by: Field to sort by
+
+    Returns:
+        Dictionary with missing items data
+    """
+    try:
+        with get_db_connection() as conn:
+            query = """
+                SELECT
+                    mi.*,
+                    s.ip_address AS ip_address
+                FROM missing_items mi
+                LEFT JOIN sessions s ON s.session_id = mi.session_id
+                WHERE 1=1
+            """
+            params = []
+
+            if item_type:
+                query += " AND mi.item_type = ?"
+                params.append(item_type)
+
+            # Count total
+            count_query = """
+                SELECT COUNT(*)
+                FROM missing_items mi
+                WHERE 1=1
+            """
+            count_params = list(params)
+            if item_type:
+                count_query += " AND mi.item_type = ?"
+            total = conn.execute(count_query, count_params).fetchone()[0]
+
+            # Sort
+            valid_sorts = ['last_seen', 'occurrence_count', 'first_seen', 'timestamp']
+            if sort_by not in valid_sorts:
+                sort_by = 'last_seen'
+
+            query += f" ORDER BY mi.{sort_by} DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+
+            cursor = conn.execute(query, params)
+            items = [dict(row) for row in cursor.fetchall()]
+
+            # Parse JSON fields and build grouped missing fields
+            request_group_ids = []
+            for item in items:
+                try:
+                    item['query_params'] = json.loads(item['query_params'])
+                except Exception:
+                    item['query_params'] = {}
+                try:
+                    item['body_data'] = json.loads(item.get('body_data') or '{}')
+                except Exception:
+                    item['body_data'] = {}
+                if item.get('request_group_id'):
+                    request_group_ids.append(item['request_group_id'])
+
+            grouped_by_request: Dict[str, Dict[str, List[str]]] = {}
+            unique_request_group_ids = list(set(request_group_ids))
+            if unique_request_group_ids:
+                placeholders = ','.join(['?'] * len(unique_request_group_ids))
+                grouped_cursor = conn.execute(f'''
+                    SELECT request_group_id, item_type, item_value
+                    FROM missing_items
+                    WHERE request_group_id IN ({placeholders})
+                ''', unique_request_group_ids)
+
+                for row in grouped_cursor.fetchall():
+                    group_id = row['request_group_id']
+                    field_name = row['item_type']
+                    field_value = row['item_value']
+                    if not group_id or not field_name:
+                        continue
+                    if group_id not in grouped_by_request:
+                        grouped_by_request[group_id] = {}
+                    if field_name not in grouped_by_request[group_id]:
+                        grouped_by_request[group_id][field_name] = []
+                    if field_value and field_value not in grouped_by_request[group_id][field_name]:
+                        grouped_by_request[group_id][field_name].append(field_value)
+
+            for item in items:
+                grouped = grouped_by_request.get(item.get('request_group_id')) if item.get('request_group_id') else None
+                if not grouped:
+                    fallback_grouped = {}
+                    if item.get('item_type') and item.get('item_value'):
+                        fallback_grouped[item['item_type']] = [item['item_value']]
+                    grouped = fallback_grouped
+                item['missing_fields_grouped'] = grouped
+                item['missing_fields'] = list(grouped.keys()) if grouped else []
+
+            # Get summary statistics
+            stats_cursor = conn.execute('''
+            SELECT
+                item_type,
+                COUNT(*) as count,
+                SUM(occurrence_count) as total_occurrences
+            FROM missing_items
+            GROUP BY item_type
+            ''')
+
+            stats_by_type = {row['item_type']: {
+                'unique_count': row['count'],
+                'total_occurrences': row['total_occurrences']
+            } for row in stats_cursor.fetchall()}
+
+            return {
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "count": len(items),
+                "items": items,
+                "stats_by_type": stats_by_type
+            }
+    except Exception as e:
+        print(f"Error retrieving missing items: {e}")
+        return {"total": 0, "items": [], "stats_by_type": {}, "error": str(e)}
+
+
+def clear_missing_items(item_type: Optional[str] = None):
+    """
+    Clear missing items records.
+
+    Args:
+        item_type: If specified, only clear items of this type
+    """
+    try:
+        with get_db_connection() as conn:
+            if item_type:
+                conn.execute("DELETE FROM missing_items WHERE item_type = ?", (item_type,))
+                print(f"Cleared missing items of type: {item_type}")
+            else:
+                conn.execute("DELETE FROM missing_items")
+                print("Cleared all missing items")
+    except Exception as e:
+        print(f"Error clearing missing items: {e}")
+
 
 # Initialize tracking on module import
 init_tracking()

@@ -690,6 +690,8 @@ def get_cache_entry(
                                 market_id = expanded_result[0]
                             else:
                                 return None
+                        else:
+                            return None
             
             # Search for market by resolved ID
             cursor.execute("""

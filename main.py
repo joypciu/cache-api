@@ -103,11 +103,12 @@ if platform.system() == "Windows" and not os.getenv('REDIS_HOST'):
     os.environ['REDIS_HOST'] = 'localhost'
     # port already defaults to 6379 elsewhere but set for clarity
     os.environ['REDIS_PORT'] = os.getenv('REDIS_PORT', '6379')
-    print("⚙️  Detected Windows local environment; configuring Redis host to localhost:6379")
+    print("[INFO] Detected Windows local environment; configuring Redis host to localhost:6379")
 
 from cache_db import get_cache_entry, get_batch_cache_entries, get_precision_batch_cache_entries, get_all_leagues
 from redis_cache import get_cache_stats, clear_all_cache, invalidate_cache
 import uuid
+import json
 import request_tracking
 import uuid_tracking
 
@@ -306,50 +307,72 @@ async def dashboard_login(admin_token: str = Form(...)):
 @app.middleware("http")
 async def track_request_middleware(request: Request, call_next):
     start_time = time.time()
-    
-    # Process request
-    response = await call_next(request)
-    
-    # Post-processing time
-    process_time = (time.time() - start_time) * 1000
-    
+
+    # --- PRE-PROCESS: create session BEFORE call_next so endpoints can read request.state.session_id ---
+    session_id = None
+    body_data = {}
     try:
-        # Extract IP
+        # Capture request body for POST/PUT/PATCH (needed for missing-item body tracking)
+        try:
+            body_bytes = await request.body()
+            if body_bytes:
+                body_data = json.loads(body_bytes)
+        except Exception:
+            body_data = {}
+        request.state.body_data = body_data
+
         ip_address = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("user-agent", "unknown")
-        
-        # Extract Token
+
         auth_header = request.headers.get("Authorization")
         token = None
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header.split(" ")[1]
-            
+
         if token:
-            # Check if admin (ADMIN_KEY defined in global scope)
             is_admin = (token == ADMIN_KEY)
-            
-            # Only track non-admin users
             if not is_admin:
-                # Generate deterministic UUID from token
-                # This ensures the same token always maps to the same UUID
                 user_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, token))
-                
-                # Create/Get Session
+
                 session_id = request_tracking.get_or_create_session(
                     token=token,
                     ip_address=ip_address,
                     user_agent=user_agent,
                     user_identifier=user_uuid
                 )
-                
-                # Track UUID Login (Geo Location)
+
+                # Store on request.state so route handlers can access it
+                request.state.session_id = session_id
+
                 uuid_tracking.track_uuid_login(
                     uuid=user_uuid,
                     ip_address=ip_address,
                     user_agent=user_agent
                 )
-                
-                # Track Request Details
+    except Exception as e:
+        print(f"Pre-tracking error: {e}")
+
+    # Process request
+    response = await call_next(request)
+
+    # --- POST-PROCESS: record the completed request with response status/time ---
+    process_time = (time.time() - start_time) * 1000
+
+    try:
+        ip_address = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "unknown")
+
+        auth_header = request.headers.get("Authorization")
+        token = None
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+
+        if token:
+            is_admin = (token == ADMIN_KEY)
+            if not is_admin and session_id:
+                user_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, token))
+                tracked_body = getattr(request.state, 'body_data', {})
+
                 request_tracking.track_request(
                     session_id=session_id,
                     method=request.method,
@@ -360,11 +383,12 @@ async def track_request_middleware(request: Request, call_next):
                     user_agent=user_agent,
                     response_status=response.status_code,
                     response_time_ms=process_time,
-                    uuid=user_uuid
+                    uuid=user_uuid,
+                    body_data=tracked_body
                 )
     except Exception as e:
         print(f"Tracking error: {e}")
-        
+
     return response
 
 # Request models for batch endpoints
@@ -533,6 +557,51 @@ async def get_cache(
         )
         
         if result is None:
+            # Track missing items for non-admin users
+            session_id = getattr(request.state, 'session_id', None)
+            if session_id:
+                request_group_id = str(uuid.uuid4())
+                cache_body = {k: v for k, v in {"market": market, "team": team, "player": player, "sport": sport, "league": league}.items() if v}
+                if market:
+                    request_tracking.track_missing_item(
+                        session_id=session_id,
+                        item_type="market",
+                        item_value=market,
+                        endpoint="/cache",
+                        query_params={"sport": sport, "league": league, "team": team, "player": player},
+                        request_group_id=request_group_id,
+                        body_data=cache_body
+                    )
+                if team:
+                    request_tracking.track_missing_item(
+                        session_id=session_id,
+                        item_type="team",
+                        item_value=team,
+                        endpoint="/cache",
+                        query_params={"sport": sport, "league": league, "market": market},
+                        request_group_id=request_group_id,
+                        body_data=cache_body
+                    )
+                if player:
+                    request_tracking.track_missing_item(
+                        session_id=session_id,
+                        item_type="player",
+                        item_value=player,
+                        endpoint="/cache",
+                        query_params={"sport": sport, "team": team, "market": market},
+                        request_group_id=request_group_id,
+                        body_data=cache_body
+                    )
+                if league:
+                    request_tracking.track_missing_item(
+                        session_id=session_id,
+                        item_type="league",
+                        item_value=league,
+                        endpoint="/cache",
+                        query_params={"sport": sport, "market": market},
+                        request_group_id=request_group_id,
+                        body_data=cache_body
+                    )
             return JSONResponse(
                 status_code=404,
                 content={
@@ -623,6 +692,64 @@ async def get_batch_cache(
             leagues=request_body.league
         )
         
+        # Track missing items (only for non-admin users)
+        session_id = getattr(request.state, 'session_id', None)
+        if session_id:
+            request_group_id = str(uuid.uuid4())
+            batch_body = request_body.dict(exclude_none=True)
+            # Track missing teams
+            if 'team' in result:
+                for team_name, team_data in result['team'].items():
+                    if team_data is None:
+                        request_tracking.track_missing_item(
+                            session_id=session_id,
+                            item_type='team',
+                            item_value=team_name,
+                            endpoint='/cache/batch',
+                            query_params={'sport': request_body.sport} if request_body.sport else {},
+                            request_group_id=request_group_id,
+                            body_data=batch_body
+                        )
+            # Track missing players
+            if 'player' in result:
+                for player_name, player_data in result['player'].items():
+                    if player_data is None:
+                        request_tracking.track_missing_item(
+                            session_id=session_id,
+                            item_type='player',
+                            item_value=player_name,
+                            endpoint='/cache/batch',
+                            query_params={},
+                            request_group_id=request_group_id,
+                            body_data=batch_body
+                        )
+            # Track missing markets
+            if 'market' in result:
+                for market_name, market_data in result['market'].items():
+                    if market_data is None:
+                        request_tracking.track_missing_item(
+                            session_id=session_id,
+                            item_type='market',
+                            item_value=market_name,
+                            endpoint='/cache/batch',
+                            query_params={},
+                            request_group_id=request_group_id,
+                            body_data=batch_body
+                        )
+            # Track missing leagues
+            if 'league' in result:
+                for league_name, league_data in result['league'].items():
+                    if league_data is None:
+                        request_tracking.track_missing_item(
+                            session_id=session_id,
+                            item_type='league',
+                            item_value=league_name,
+                            endpoint='/cache/batch',
+                            query_params={'sport': request_body.sport} if request_body.sport else {},
+                            request_group_id=request_group_id,
+                            body_data=batch_body
+                        )
+
         return JSONResponse(
             status_code=200,
             content=result
@@ -780,6 +907,31 @@ async def get_sessions(token: str = Depends(verify_admin_token)):
 async def get_cache_statistics(token: str = Depends(verify_admin_token)):
     """Get Redis cache statistics (requires admin authentication)"""
     return get_cache_stats()
+
+@app.get("/admin/missing-items", tags=["admin"])
+async def get_missing_items(
+    item_type: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    sort_by: str = "last_seen",
+    token: str = Depends(verify_admin_token)
+):
+    """Get missing items that were not found in cache or database (requires admin authentication)"""
+    return request_tracking.get_missing_items(
+        item_type=item_type,
+        limit=limit,
+        offset=offset,
+        sort_by=sort_by
+    )
+
+@app.delete("/admin/missing-items", tags=["admin"])
+async def clear_missing_items(
+    item_type: Optional[str] = None,
+    token: str = Depends(verify_admin_token)
+):
+    """Clear missing items records (requires admin authentication)"""
+    request_tracking.clear_missing_items(item_type=item_type)
+    return {"message": "Missing items cleared successfully"}
 
 @app.get("/docs", include_in_schema=False)
 async def custom_swagger_ui_html(admin_token: Optional[str] = Query(None)):
