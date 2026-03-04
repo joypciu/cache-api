@@ -90,6 +90,7 @@ logs/
 
 # ignore test files
 test_*.py
+!test_pr.py
 *.test.py
 tests/
 test/
