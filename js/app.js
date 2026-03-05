@@ -801,8 +801,8 @@ function renderTokens(tokens) {
             { label: 'Admin Tokens', value: admins, color: '#f59e0b' },
             { label: 'Revoked', value: revoked, color: '#ef4444' },
         ].map(c => `
-            <div style="background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:16px; border-left:4px solid ${c.color};">
-                <div style="font-size:0.8rem; color:#6b7280; margin-bottom:4px;">${c.label}</div>
+            <div style="background:#22272e; border:1px solid #30363d; border-radius:10px; padding:16px; border-left:4px solid ${c.color};">
+                <div style="font-size:0.75rem; color:#8b949e; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.06em;">${c.label}</div>
                 <div style="font-size:1.8rem; font-weight:700; color:${c.color};">${c.value}</div>
             </div>
         `).join('');
@@ -1036,8 +1036,8 @@ function renderAnalyticsSummary(failData) {
         { label: '5xx Errors', value: e5xx, color: '#dc2626' },
         { label: 'Affected Endpoints', value: affectedPaths, color: '#4f46e5' },
     ].map(c => `
-        <div style="background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:16px; border-left:4px solid ${c.color};">
-            <div style="font-size:0.8rem; color:#6b7280; margin-bottom:4px;">${c.label}</div>
+        <div style="background:#22272e; border:1px solid #30363d; border-radius:10px; padding:16px; border-left:4px solid ${c.color};">
+            <div style="font-size:0.75rem; color:#8b949e; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.06em;">${c.label}</div>
             <div style="font-size:1.8rem; font-weight:700; color:${c.color};">${c.value}</div>
         </div>
     `).join('');
@@ -1053,7 +1053,7 @@ function renderFailuresByPath(rows) {
         return `<tr>
             <td><code style="font-size:0.85em;">${escapeHtml(r.path)}</code></td>
             <td><strong>${r.count}</strong></td>
-            <td><div style="background:#fee2e2; border-radius:4px; height:8px;">
+            <td><div style="background:#2d1f1f; border-radius:4px; height:8px;">
                 <div style="width:${pct}%; background:#ef4444; height:8px; border-radius:4px;"></div>
             </div></td>
         </tr>`;
@@ -1072,7 +1072,7 @@ function renderFailuresByStatus(rows) {
         return `<tr>
             <td><span style="padding:2px 8px; border-radius:4px; background:${color}; color:#fff; font-size:0.85em;">${r.status}</span></td>
             <td><strong>${r.count}</strong></td>
-            <td><div style="background:#f3f4f6; border-radius:4px; height:8px;">
+            <td><div style="background:#1e2128; border-radius:4px; height:8px;">
                 <div style="width:${pct}%; background:${color}; height:8px; border-radius:4px;"></div>
             </div></td>
         </tr>`;
@@ -1087,8 +1087,8 @@ function renderTopSignatures(sigs) {
         const params = typeof s.query_params === 'object' ? JSON.stringify(s.query_params) : String(s.query_params || '');
         return `<tr>
             <td><code style="font-size:0.85em;">${escapeHtml(s.path)}</code></td>
-            <td><span style="padding:2px 6px; border-radius:4px; background:#fee2e2; color:#991b1b; font-size:0.85em;">${s.response_status}</span></td>
-            <td style="font-size:0.85em; color:#64748b; max-width:200px; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(params)}</td>
+            <td><span style="padding:2px 6px; border-radius:4px; background:rgba(248,113,113,0.15); color:#f87171; font-size:0.85em;">${s.response_status}</span></td>
+            <td style="font-size:0.85em; color:#8b949e; max-width:200px; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(params)}</td>
             <td><strong>${s.count}</strong></td>
             <td><small>${formatTimestamp(s.first_seen)}</small></td>
             <td><small>${formatTimestamp(s.last_seen)}</small></td>
@@ -1135,7 +1135,7 @@ function renderTrends(buckets) {
                 </div>`;
             }).join('')}
         </div>
-        <div style="display:flex; gap:16px; margin-top:8px; font-size:0.8rem; color:#6b7280;">
+        <div style="display:flex; gap:16px; margin-top:8px; font-size:0.8rem; color:#8b949e;">
             <span><span style="display:inline-block; width:10px; height:10px; background:#4f46e5; border-radius:2px; margin-right:4px;"></span>Success</span>
             <span><span style="display:inline-block; width:10px; height:10px; background:#ef4444; border-radius:2px; margin-right:4px;"></span>Errors</span>
         </div>
