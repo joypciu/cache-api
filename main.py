@@ -263,7 +263,7 @@ app.mount("/admin/css", StaticFiles(directory="css"), name="admin_css")
 @app.get("/admin/dashboard", tags=["admin"])
 async def serve_dashboard():
         """Serve the admin dashboard. Auth is handled client-side via JS/localStorage."""
-        return FileResponse("dashboard.html")
+        return FileResponse("dashboard.html", headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
 
 @app.post("/admin/dashboard/login", tags=["admin"], include_in_schema=False)
