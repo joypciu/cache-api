@@ -172,10 +172,17 @@ def check_rate_limit(client_ip: str) -> bool:
 async def verify_rate_limit(request: Request):
     """
     Middleware to check rate limiting before processing request.
+    Non-admin key bypasses rate limiting entirely.
     
     Raises:
         HTTPException: If rate limit is exceeded
     """
+    # Non-admin key gets unlimited access - no rate limit applied
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else ""
+    if NON_ADMIN_KEY and token and hmac.compare_digest(token.encode(), NON_ADMIN_KEY.encode()):
+        return
+
     client_ip = request.client.host if request.client else "unknown"
     
     if not check_rate_limit(client_ip):
